@@ -1,0 +1,34 @@
+[package]
+name = "garou"
+version = "1.0.0"
+description = "TUI: Simple Image Protocol Viewer for Kitty Graphics Protocol"
+keywords = ["tui","viewer","image-viewer","kitty","graphics"]
+categories = ["command-line-utilities", "visualization", "graphics"]
+license = "MIT"
+edition = "2024"
+readme = "README.md"
+authors = ["ikata"]
+repository = "https://github.com/c0b23092db/garou"
+
+[[bin]]
+name = "siv"
+path = "src/main.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+crossterm = "0.29.0"
+base64 = "0.22.1"
+image = "0.25.9"
+terminal_size = "0.4.3"
+smol = "2.0.2"
+toml = "1.1.0"
+serde = { version = "1.0", features = ["derive"] }
+open = "5"
+unicode-width = "0.2"
+dirs = "6"
+libc = "0.2"
