@@ -17,7 +17,7 @@ use crossterm::{
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
-    io,
+    io::{self, Write},
     time::Duration,
     time::Instant,
 };
@@ -123,6 +123,7 @@ pub fn render_image(
                             &patch_payload,
                         )?;
                     }
+                    stdout.flush()?;
                     patched = true;
                     upload_completed = true;
                     state.last_rgba_frame = Some(next);
@@ -145,6 +146,7 @@ pub fn render_image(
                 &mut state.shared_memory,
             );
             send_upload(stdout, placement, &upload_payload)?;
+            stdout.flush()?;
             upload_completed = true;
         }
 
