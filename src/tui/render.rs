@@ -3,7 +3,7 @@ use anyhow::Result;
 use crossterm::{
     cursor::MoveTo,
     queue,
-    style::Color,
+    style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
     terminal::{Clear, ClearType},
 };
 use std::{
@@ -12,6 +12,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 pub mod filetree;
 pub mod header;
@@ -22,7 +23,10 @@ pub mod statusbar;
 use self::{
     filetree::{FileTreeEntry, render_filetree},
     header::render_header,
-    image::{ImageRenderParams, ImageRenderState, RgbaFrame, render_image},
+    image::{
+        ImageRenderMetrics, ImageRenderParams, ImageRenderState, RgbaFrame, render_image,
+        send_delete,
+    },
     overlay::{build_overlay_info, render_overlay},
     statusbar::render_statusbar,
 };
@@ -64,6 +68,8 @@ pub struct HeaderRenderInput<'a> {
 pub struct RenderOptions {
     pub refresh_image: bool,
     pub full_refresh: bool,
+    pub skip_image: bool,
+    pub preserve_image: bool,
     pub sidebar_visible: bool,
     pub header_visible: bool,
     pub statusbar_visible: bool,
@@ -102,6 +108,8 @@ pub struct RenderOptions {
     pub rgba_frame: Option<RgbaFrame>,
     /// 画像情報オーバーレイの表示フラグ
     pub overlay_visible: bool,
+    /// ステータスバーに表示するメッセージ
+    pub status_message: Option<String>,
     /// 描画外で発生した画像処理時間（デコード/リサイズ/エンコード等）
     pub processing_duration: Duration,
     /// 画像キャッシュヒット率 (0.0-1.0)。キャッシュ無効時は None。
@@ -134,6 +142,7 @@ pub fn render_frame(
     } else {
         queue!(stdout, MoveTo(0, 0), Clear(ClearType::CurrentLine))?;
     }
+
     let mut image_start_x = 0u16;
     let mut available_width = term_width;
     if options.sidebar_visible {
@@ -143,31 +152,67 @@ pub fn render_frame(
     }
 
     let available_height = term_height.saturating_sub(2);
+    let is_image_size_limit_error = options
+        .status_message
+        .as_deref()
+        .is_some_and(|message| message == "Image size exceeds limit");
 
-    let render_metrics = render_image(
-        stdout,
-        image_render_state,
-        ImageRenderParams {
-            term_width: available_width,
-            available_height,
-            start_x: image_start_x,
-            always_upload: options.always_upload,
-            transport_mode: options.transport_mode,
-            diff_mode: options.diff_mode,
-            image_dimensions: options.image_dimensions,
-            payload_hash: options.payload_hash,
-            image_data: options.image_data,
-            encoded_payload: options.encoded_payload,
-            refresh_image: options.refresh_image,
-            dirty_ratio: options.dirty_ratio,
-            tile_grid: options.tile_grid,
-            skip_step: options.skip_step,
-            zoom_factor: options.zoom_factor,
-            pan_x: options.pan_x,
-            pan_y: options.pan_y,
-            rgba_frame: options.rgba_frame,
-        },
-    )?;
+    let render_metrics = if options.skip_image {
+        if is_image_size_limit_error || !options.preserve_image {
+            send_delete(stdout)?;
+            image_render_state.reset_upload_state();
+            queue!(
+                stdout,
+                MoveTo(image_start_x, 1),
+                Clear(ClearType::FromCursorDown)
+            )?;
+        }
+
+        ImageRenderMetrics {
+            render_duration: Duration::ZERO,
+            dirty_tiles: None,
+            placement: (image_start_x, 1, 0, 0),
+        }
+    } else {
+        render_image(
+            stdout,
+            image_render_state,
+            ImageRenderParams {
+                term_width: available_width,
+                available_height,
+                start_x: image_start_x,
+                always_upload: options.always_upload,
+                transport_mode: options.transport_mode,
+                diff_mode: options.diff_mode,
+                image_dimensions: options.image_dimensions,
+                payload_hash: options.payload_hash,
+                image_data: options.image_data,
+                encoded_payload: options.encoded_payload,
+                refresh_image: options.refresh_image,
+                dirty_ratio: options.dirty_ratio,
+                tile_grid: options.tile_grid,
+                skip_step: options.skip_step,
+                zoom_factor: options.zoom_factor,
+                pan_x: options.pan_x,
+                pan_y: options.pan_y,
+                rgba_frame: options.rgba_frame,
+            },
+        )?
+    };
+
+    if let Some(message) = options.status_message.as_deref() {
+        if is_image_size_limit_error {
+            render_image_message_top_left(stdout, image_start_x, available_width, message)?;
+        } else {
+            render_image_message_center(
+                stdout,
+                image_start_x,
+                available_width,
+                available_height,
+                message,
+            )?;
+        }
+    }
 
     // 画像描画後にサイドバーを重ねて、パン時の重なりを防ぐ。
     if options.sidebar_visible {
@@ -176,20 +221,42 @@ pub fn render_frame(
     }
 
     if options.statusbar_visible {
-        let elapsed = render_metrics
-            .render_duration
-            .saturating_add(options.processing_duration);
-        render_statusbar(
-            stdout,
-            term_width,
-            term_height,
-            elapsed,
-            options.image_dimensions,
-            options.cache_hit_rate,
-            render_metrics.dirty_tiles,
-            options.statusbar_bg_color,
-            options.statusbar_fg_color,
-        )?;
+        if is_image_size_limit_error {
+            render_statusbar(
+                stdout,
+                term_width,
+                term_height,
+                Duration::ZERO,
+                options.image_dimensions,
+                options.cache_hit_rate,
+                render_metrics.dirty_tiles,
+                None,
+                options.statusbar_bg_color,
+                options.statusbar_fg_color,
+            )?;
+        } else if options.skip_image && options.status_message.is_none() {
+            queue!(
+                stdout,
+                MoveTo(0, term_height.saturating_sub(1) as u16),
+                Clear(ClearType::CurrentLine)
+            )?;
+        } else {
+            let elapsed = render_metrics
+                .render_duration
+                .saturating_add(options.processing_duration);
+            render_statusbar(
+                stdout,
+                term_width,
+                term_height,
+                elapsed,
+                options.image_dimensions,
+                options.cache_hit_rate,
+                render_metrics.dirty_tiles,
+                options.status_message.as_deref(),
+                options.statusbar_bg_color,
+                options.statusbar_fg_color,
+            )?;
+        }
     } else {
         queue!(
             stdout,
@@ -199,6 +266,7 @@ pub fn render_frame(
     }
 
     if options.overlay_visible
+        && !options.skip_image
         && let Some(path) = input.image_files.get(input.current_index)
     {
         let info = build_overlay_info(path, options.image_dimensions);
@@ -211,6 +279,95 @@ pub fn render_frame(
         dirty_tiles: render_metrics.dirty_tiles,
         placement: render_metrics.placement,
     })
+}
+
+fn render_image_message_center(
+    stdout: &mut io::Stdout,
+    image_start_x: u16,
+    available_width: u32,
+    available_height: u32,
+    message: &str,
+) -> Result<()> {
+    if available_width == 0 || available_height == 0 {
+        return Ok(());
+    }
+
+    let max_width = available_width.saturating_sub(2).max(1) as usize;
+    let mut line = if message.width() > max_width {
+        let mut out = String::new();
+        let mut used_width = 0;
+        for ch in message.chars() {
+            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+            if used_width + ch_width > max_width {
+                break;
+            }
+            used_width += ch_width;
+            out.push(ch);
+        }
+        out
+    } else {
+        message.to_string()
+    };
+
+    let padding = max_width.saturating_sub(line.width());
+    line.push_str(&" ".repeat(padding));
+
+    let line_width = line.width() as u16;
+    let centered_x =
+        image_start_x.saturating_add((available_width as u16).saturating_sub(line_width) / 2);
+    let centered_y = 1u16.saturating_add((available_height as u16) / 2);
+
+    queue!(
+        stdout,
+        MoveTo(centered_x, centered_y),
+        SetBackgroundColor(Color::DarkGrey),
+        SetForegroundColor(Color::White),
+        Print(line),
+        ResetColor
+    )?;
+
+    Ok(())
+}
+
+fn render_image_message_top_left(
+    stdout: &mut io::Stdout,
+    image_start_x: u16,
+    available_width: u32,
+    message: &str,
+) -> Result<()> {
+    if available_width == 0 {
+        return Ok(());
+    }
+
+    let max_width = available_width.saturating_sub(2).max(1) as usize;
+    let mut line = if message.width() > max_width {
+        let mut out = String::new();
+        let mut used_width = 0;
+        for ch in message.chars() {
+            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+            if used_width + ch_width > max_width {
+                break;
+            }
+            used_width += ch_width;
+            out.push(ch);
+        }
+        out
+    } else {
+        message.to_string()
+    };
+
+    let padding = max_width.saturating_sub(line.width());
+    line.push_str(&" ".repeat(padding));
+
+    queue!(
+        stdout,
+        MoveTo(image_start_x, 1),
+        SetForegroundColor(Color::White),
+        Print(line),
+        ResetColor
+    )?;
+
+    Ok(())
 }
 
 /// ヘッダーのみを描画する関数

@@ -73,4 +73,11 @@ impl ImageRenderState {
     pub fn new() -> Self {
         Self::default()
     }
+
+    pub(crate) fn reset_upload_state(&mut self) {
+        self.has_uploaded = false;
+        self.last_payload_hash = None;
+        self.last_placement = None;
+        self.last_rgba_frame = None;
+    }
 }

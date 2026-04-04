@@ -3,7 +3,6 @@ use crossterm::{
     cursor::MoveTo,
     queue,
     style::{Color, Print, ResetColor, SetBackgroundColor, SetForegroundColor},
-    terminal::{Clear, ClearType},
 };
 use std::{io, time::Duration};
 use unicode_width::UnicodeWidthStr;
@@ -17,6 +16,7 @@ pub fn render_statusbar(
     image_dimensions: (u32, u32),
     cache_hit_rate: Option<f32>,
     dirty_tiles: Option<usize>,
+    status_message: Option<&str>,
     statusbar_bg_color: Color,
     statusbar_fg_color: Color,
 ) -> Result<()> {
@@ -25,17 +25,21 @@ pub fn render_statusbar(
     }
 
     let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
-    let (img_width, img_height) = image_dimensions;
-    let hit_text = cache_hit_rate
-        .map(|rate| format!("hit:{:.0}%", rate * 100.0))
-        .unwrap_or_else(|| "hit:--".to_string());
-    let dirty_text = dirty_tiles
-        .map(|count| format!("dirty:{}", count))
-        .unwrap_or_else(|| "dirty:--".to_string());
-    let text = format!(
-        "{:.1}ms | {}x{} | {} | {}",
-        elapsed_ms, img_width, img_height, hit_text, dirty_text
-    );
+    let text = if let Some(message) = status_message {
+        message.to_string()
+    } else {
+        let (img_width, img_height) = image_dimensions;
+        let hit_text = cache_hit_rate
+            .map(|rate| format!("hit:{:.0}%", rate * 100.0))
+            .unwrap_or_else(|| "hit:--".to_string());
+        let dirty_text = dirty_tiles
+            .map(|count| format!("dirty:{}", count))
+            .unwrap_or_else(|| "dirty:--".to_string());
+        format!(
+            "{:.1}ms | {}x{} | {} | {}",
+            elapsed_ms, img_width, img_height, hit_text, dirty_text
+        )
+    };
 
     // 最下行での自動折り返しスクロールを防ぐため、末尾1セルは使わない。
     let width = term_width.saturating_sub(1) as usize;
@@ -60,7 +64,6 @@ pub fn render_statusbar(
     queue!(
         stdout,
         MoveTo(0, term_height.saturating_sub(1) as u16),
-        Clear(ClearType::CurrentLine),
         SetBackgroundColor(statusbar_bg_color),
         SetForegroundColor(statusbar_fg_color),
         Print(line),

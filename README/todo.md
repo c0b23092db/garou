@@ -40,7 +40,6 @@ for (p, n) in prev_u32.iter().zip(next_u32.iter()) {
 ### クレートを採用する
 - rayon による並列差分判定
 - memmap2 によるメモリマップ I/O
-- zune-image / image の代替デコーダ
 
 ## 一瞬硬直する
 同期的に処理しているため、処理するときに硬直が見られる

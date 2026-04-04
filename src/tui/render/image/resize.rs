@@ -7,6 +7,7 @@ const DPI_SCALE_NUM: u32 = 1;
 const DPI_SCALE_DEN: u32 = 1;
 const PIXEL_SAFETY_FACTOR: u32 = 2;
 
+/// ターミナルの物理ピクセル制限を計算する関数
 pub(in crate::tui) fn terminal_pixel_limit() -> (u32, u32) {
     let (cols, rows) = size().unwrap_or((120, 40));
     let content_rows = rows.saturating_sub(2).max(1);
@@ -27,6 +28,7 @@ pub(in crate::tui) fn terminal_pixel_limit() -> (u32, u32) {
     (width_px, height_px)
 }
 
+/// RGBA画像がターミナルの物理ピクセル制限を超える場合にリサイズする関数
 pub(in crate::tui) fn resize_rgba_if_needed(image: RgbaImage, max_w: u32, max_h: u32) -> RgbaImage {
     let (w, h) = image.dimensions();
     if w <= max_w && h <= max_h {
