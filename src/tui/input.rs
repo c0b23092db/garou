@@ -6,6 +6,7 @@ use crate::core::SortField;
 mod clear;
 mod input_move;
 mod open;
+mod pan;
 mod sort;
 mod zoom;
 
@@ -14,8 +15,20 @@ use super::state::{NavDirection, RedrawMode, ViewerState};
 use clear::{clear_and_full_refresh, clear_and_image_refresh};
 use input_move::{apply_sidebar_cursor_change, schedule_redraw, sync_sidebar_to_image};
 use open::open_current_image;
+use pan::pan_image;
 use sort::apply_sort;
 use zoom::{fit_image, zoom_in, zoom_out};
+
+fn is_mouse_on_image(mouse: MouseEvent, state: &ViewerState) -> bool {
+    let Some((x, y, w, h)) = state.last_image_rect() else {
+        return false;
+    };
+    let x_end = u32::from(x).saturating_add(w);
+    let y_end = u32::from(y).saturating_add(h);
+    let mx = u32::from(mouse.column);
+    let my = u32::from(mouse.row);
+    mx >= u32::from(x) && mx < x_end && my >= u32::from(y) && my < y_end
+}
 
 /// キー入力を処理し、必要に応じて描画モードを更新する
 pub fn process_key(
@@ -36,11 +49,56 @@ pub fn process_key(
 
     let page_rows = usize::from(term_height.saturating_sub(2)).max(1);
     match key.code {
+        // q: 終了
         KeyCode::Char('q') | KeyCode::Esc => true,
+        // o: 既定の画像ビューアで開く
         KeyCode::Char('o') | KeyCode::Char('O') => {
             open_current_image(image_files, *current_index);
             false
         }
+        // Alt+s: サイドバーの表示切替
+        KeyCode::Char('s') | KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::ALT) => {
+            state.set_sidebar_visible(!state.sidebar_visible());
+            clear_and_full_refresh(redraw_mode, state);
+            false
+        }
+        // Alt+d: ステータスバーの表示切替
+        KeyCode::Char('d') | KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::ALT) => {
+            state.set_statusbar_visible(!state.statusbar_visible());
+            clear_and_full_refresh(redraw_mode, state);
+            false
+        }
+        // Alt+f: ヘッダーの表示切替
+        KeyCode::Char('f') | KeyCode::Char('F') if key.modifiers.contains(KeyModifiers::ALT) => {
+            state.set_header_visible(!state.header_visible());
+            clear_and_full_refresh(redraw_mode, state);
+            false
+        }
+        // r: 画像の再読み込み
+        KeyCode::Char('r') => {
+            clear_and_image_refresh(redraw_mode, state);
+            false
+        }
+        // R: 画面の完全な再描画
+        KeyCode::Char('R') => {
+            clear_and_full_refresh(redraw_mode, state);
+            false
+        }
+        /* サイドバーのカーソル移動 */
+        // j/k: サイドバーでのカーソル移動
+        KeyCode::Char('j') | KeyCode::Down if state.sidebar_visible() => {
+            if state.sidebar_tree.move_cursor(1) {
+                apply_sidebar_cursor_change(current_index, redraw_mode, state, debounce_duration);
+            }
+            false
+        }
+        KeyCode::Char('k') | KeyCode::Up if state.sidebar_visible() => {
+            if state.sidebar_tree.move_cursor(-1) {
+                apply_sidebar_cursor_change(current_index, redraw_mode, state, debounce_duration);
+            }
+            false
+        }
+        // Ctrl+b: 一ページ前へ移動
         KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             let moved = if state.sidebar_visible() {
                 state.sidebar_tree.move_cursor_page(-1, page_rows)
@@ -70,6 +128,7 @@ pub fn process_key(
             }
             false
         }
+        // Ctrl+f: 一ページ次へ移動
         KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             let moved = if state.sidebar_visible() {
                 state.sidebar_tree.move_cursor_page(1, page_rows)
@@ -99,152 +158,7 @@ pub fn process_key(
             }
             false
         }
-        KeyCode::Char('s') | KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::ALT) => {
-            state.set_sidebar_visible(!state.sidebar_visible());
-            clear_and_full_refresh(redraw_mode, state);
-            false
-        }
-        KeyCode::Char('d') | KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::ALT) => {
-            state.set_statusbar_visible(!state.statusbar_visible());
-            clear_and_full_refresh(redraw_mode, state);
-            false
-        }
-        KeyCode::Char('f') | KeyCode::Char('F') if key.modifiers.contains(KeyModifiers::ALT) => {
-            state.set_header_visible(!state.header_visible());
-            clear_and_full_refresh(redraw_mode, state);
-            false
-        }
-        KeyCode::Char('r') => {
-            clear_and_image_refresh(redraw_mode, state);
-            false
-        }
-        KeyCode::Char('R') => {
-            clear_and_full_refresh(redraw_mode, state);
-            false
-        }
-        KeyCode::Char('+')  => {
-            zoom_in(redraw_mode, state);
-            false
-        }
-        KeyCode::Char('-') => {
-            zoom_out(redraw_mode, state);
-            false
-        }
-        KeyCode::Char('0') => {
-            fit_image(redraw_mode, state);
-            false
-        }
-        KeyCode::Char(',') => {
-            apply_sort(
-                image_files,
-                current_index,
-                redraw_mode,
-                state,
-                sort_field,
-                sort_descending,
-                sort_field.next(),
-                false,
-            );
-            false
-        }
-        KeyCode::Char('m') => {
-            apply_sort(
-                image_files,
-                current_index,
-                redraw_mode,
-                state,
-                sort_field,
-                sort_descending,
-                SortField::ModifiedTime,
-                false,
-            );
-            false
-        }
-        KeyCode::Char('M') => {
-            apply_sort(
-                image_files,
-                current_index,
-                redraw_mode,
-                state,
-                sort_field,
-                sort_descending,
-                SortField::ModifiedTime,
-                true,
-            );
-            false
-        }
-        KeyCode::Char('n') => {
-            apply_sort(
-                image_files,
-                current_index,
-                redraw_mode,
-                state,
-                sort_field,
-                sort_descending,
-                SortField::Natural,
-                false,
-            );
-            false
-        }
-        KeyCode::Char('N') => {
-            apply_sort(
-                image_files,
-                current_index,
-                redraw_mode,
-                state,
-                sort_field,
-                sort_descending,
-                SortField::Natural,
-                true,
-            );
-            false
-        }
-        KeyCode::Char('s') => {
-            apply_sort(
-                image_files,
-                current_index,
-                redraw_mode,
-                state,
-                sort_field,
-                sort_descending,
-                SortField::Size,
-                false,
-            );
-            false
-        }
-        KeyCode::Char('S') => {
-            apply_sort(
-                image_files,
-                current_index,
-                redraw_mode,
-                state,
-                sort_field,
-                sort_descending,
-                SortField::Size,
-                true,
-            );
-            false
-        }
-        KeyCode::Char('j') | KeyCode::Char('J') | KeyCode::Down if state.sidebar_visible() => {
-            if state.sidebar_tree.move_cursor(1) {
-                apply_sidebar_cursor_change(current_index, redraw_mode, state, debounce_duration);
-            }
-            false
-        }
-        KeyCode::Char('k') | KeyCode::Char('K') | KeyCode::Up if state.sidebar_visible() => {
-            if state.sidebar_tree.move_cursor(-1) {
-                apply_sidebar_cursor_change(current_index, redraw_mode, state, debounce_duration);
-            }
-            false
-        }
-        KeyCode::Enter if state.sidebar_visible() => {
-            if state.sidebar_tree.toggle_current_dir() {
-                *redraw_mode = RedrawMode::HeaderRefresh;
-                return false;
-            }
-            apply_sidebar_cursor_change(current_index, redraw_mode, state, debounce_duration);
-            false
-        }
+        // g: 先頭へ移動
         KeyCode::Char('g') => {
             let moved = if state.sidebar_visible() {
                 state.sidebar_tree.move_to_start()
@@ -274,6 +188,7 @@ pub fn process_key(
             }
             false
         }
+        // G: 末尾へ移動
         KeyCode::Char('G') => {
             let moved = if state.sidebar_visible() {
                 state.sidebar_tree.move_to_end()
@@ -303,7 +218,17 @@ pub fn process_key(
             }
             false
         }
-        KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Left => {
+        // Enter: ディレクトリの展開/折りたたみ（サイドバー表示時）
+        KeyCode::Enter if state.sidebar_visible() => {
+            if state.sidebar_tree.toggle_current_dir() {
+                *redraw_mode = RedrawMode::HeaderRefresh;
+                return false;
+            }
+            apply_sidebar_cursor_change(current_index, redraw_mode, state, debounce_duration);
+            false
+        }
+        // h/l: 画像の前後移動（サイドバー非表示時）またはディレクトリの展開/折りたたみ（サイドバー表示時）
+        KeyCode::Char('h') | KeyCode::Left => {
             if state.sidebar_visible() {
                 if state.sidebar_tree.collapse_current_dir() {
                     *redraw_mode = RedrawMode::HeaderRefresh;
@@ -321,7 +246,7 @@ pub fn process_key(
             schedule_redraw(redraw_mode, state, debounce_duration);
             false
         }
-        KeyCode::Char('l') | KeyCode::Char('L') | KeyCode::Right => {
+        KeyCode::Char('l') | KeyCode::Right => {
             if state.sidebar_visible() {
                 if state.sidebar_tree.expand_current_dir() {
                     *redraw_mode = RedrawMode::HeaderRefresh;
@@ -339,6 +264,123 @@ pub fn process_key(
             schedule_redraw(redraw_mode, state, debounce_duration);
             false
         }
+        /* 画像のズーム・パン */
+        KeyCode::Char('H') => {
+            pan_image(redraw_mode, state, -2, 0);
+            false
+        }
+        KeyCode::Char('L') => {
+            pan_image(redraw_mode, state, 2, 0);
+            false
+        }
+        KeyCode::Char('J') => {
+            pan_image(redraw_mode, state, 0, 1);
+            false
+        }
+        KeyCode::Char('K') => {
+            pan_image(redraw_mode, state, 0, -1);
+            false
+        }
+        // +: ズームイン
+        KeyCode::Char('+') => {
+            zoom_in(redraw_mode, state);
+            false
+        }
+        // -: ズームアウト
+        KeyCode::Char('-') => {
+            zoom_out(redraw_mode, state);
+            false
+        }
+        // 0: 画像フィット
+        KeyCode::Char('0') => {
+            fit_image(redraw_mode, state);
+            false
+        }
+        /* ソート */
+        // .: ソート基準の切り替え（降順）
+        KeyCode::Char('m') => {
+            apply_sort(
+                image_files,
+                current_index,
+                redraw_mode,
+                state,
+                sort_field,
+                sort_descending,
+                SortField::ModifiedTime,
+                false,
+            );
+            false
+        }
+        // ,: ソート基準の切り替え（昇順）
+        KeyCode::Char('M') => {
+            apply_sort(
+                image_files,
+                current_index,
+                redraw_mode,
+                state,
+                sort_field,
+                sort_descending,
+                SortField::ModifiedTime,
+                true,
+            );
+            false
+        }
+        // n: ソート基準の切り替え（降順）
+        KeyCode::Char('n') => {
+            apply_sort(
+                image_files,
+                current_index,
+                redraw_mode,
+                state,
+                sort_field,
+                sort_descending,
+                SortField::Natural,
+                false,
+            );
+            false
+        }
+        // N: ソート基準の切り替え（昇順）
+        KeyCode::Char('N') => {
+            apply_sort(
+                image_files,
+                current_index,
+                redraw_mode,
+                state,
+                sort_field,
+                sort_descending,
+                SortField::Natural,
+                true,
+            );
+            false
+        }
+        // s: ソート基準の切り替え（降順）
+        KeyCode::Char('s') => {
+            apply_sort(
+                image_files,
+                current_index,
+                redraw_mode,
+                state,
+                sort_field,
+                sort_descending,
+                SortField::Size,
+                false,
+            );
+            false
+        }
+        // S: ソート基準の切り替え（昇順）
+        KeyCode::Char('S') => {
+            apply_sort(
+                image_files,
+                current_index,
+                redraw_mode,
+                state,
+                sort_field,
+                sort_descending,
+                SortField::Size,
+                true,
+            );
+            false
+        }
         _ => false,
     }
 }
@@ -353,6 +395,18 @@ pub fn process_mouse(
     sidebar_width: u16,
     term_height: u16,
 ) -> bool {
+    match mouse.kind {
+        MouseEventKind::ScrollUp if is_mouse_on_image(mouse, state) => {
+            zoom_in(redraw_mode, state);
+            return false;
+        }
+        MouseEventKind::ScrollDown if is_mouse_on_image(mouse, state) => {
+            zoom_out(redraw_mode, state);
+            return false;
+        }
+        _ => {}
+    }
+
     if !state.sidebar_visible() {
         return false;
     }

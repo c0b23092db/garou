@@ -136,6 +136,8 @@ fn viewer_loop(
             tile_grid: options.tile_grid.max(1),
             skip_step: options.skip_step,
             zoom_factor: 1.0,
+            pan_x: 0,
+            pan_y: 0,
         },
         perf: PerformanceStats::default(),
         sidebar_tree: SidebarTree::from_image_files(
@@ -402,11 +404,17 @@ fn render_current_mode(
             tile_grid: state.tile_grid(),
             skip_step: state.skip_step(),
             zoom_factor: state.zoom_factor(),
+            pan_x: state.pan_x(),
+            pan_y: state.pan_y(),
             cache_hit_rate: state.cache_hit_rate(),
         },
         &mut state.image_render_state,
     )?;
-    state.record_render_metrics(frame_metrics.render_duration, frame_metrics.dirty_tiles);
+    state.record_render_metrics(
+        frame_metrics.render_duration,
+        frame_metrics.dirty_tiles,
+        frame_metrics.placement,
+    );
 
     if flags.prefetch_after {
         let idle_prefetch_steps = state.prefetch_size();
@@ -474,11 +482,17 @@ fn render_prepared_mode(
             tile_grid: state.tile_grid(),
             skip_step: state.skip_step(),
             zoom_factor: state.zoom_factor(),
+            pan_x: state.pan_x(),
+            pan_y: state.pan_y(),
             cache_hit_rate: state.cache_hit_rate(),
         },
         &mut state.image_render_state,
     )?;
-    state.record_render_metrics(frame_metrics.render_duration, frame_metrics.dirty_tiles);
+    state.record_render_metrics(
+        frame_metrics.render_duration,
+        frame_metrics.dirty_tiles,
+        frame_metrics.placement,
+    );
 
     if flags.prefetch_after {
         let idle_prefetch_steps = state.prefetch_size();

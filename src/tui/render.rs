@@ -29,6 +29,7 @@ use self::{
 pub struct FrameRenderMetrics {
     pub render_duration: Duration,
     pub dirty_tiles: Option<usize>,
+    pub placement: (u16, u16, u32, u32),
 }
 
 /// 描画に必要な入力データを管理する構造体
@@ -91,6 +92,10 @@ pub struct RenderOptions {
     pub skip_step: u32,
     /// 画像表示ズーム倍率 (fit=1.0)
     pub zoom_factor: f32,
+    /// 水平方向パン（セル単位）
+    pub pan_x: i16,
+    /// 垂直方向パン（セル単位）
+    pub pan_y: i16,
     /// 画像キャッシュヒット率 (0.0-1.0)。キャッシュ無効時は None。
     pub cache_hit_rate: Option<f32>,
 }
@@ -125,7 +130,6 @@ pub fn render_frame(
     let mut available_width = term_width;
     if options.sidebar_visible {
         let sidebar_width = options.sidebar_size.max(1);
-        render_filetree(stdout, input.sidebar_entries, sidebar_width, term_height)?;
         image_start_x = sidebar_width;
         available_width = term_width.saturating_sub(sidebar_width as u32);
     }
@@ -151,8 +155,16 @@ pub fn render_frame(
             tile_grid: options.tile_grid,
             skip_step: options.skip_step,
             zoom_factor: options.zoom_factor,
+            pan_x: options.pan_x,
+            pan_y: options.pan_y,
         },
     )?;
+
+    // 画像描画後にサイドバーを重ねて、パン時の重なりを防ぐ。
+    if options.sidebar_visible {
+        let sidebar_width = options.sidebar_size.max(1);
+        render_filetree(stdout, input.sidebar_entries, sidebar_width, term_height)?;
+    }
 
     if options.statusbar_visible {
         render_statusbar(
@@ -178,6 +190,7 @@ pub fn render_frame(
     Ok(FrameRenderMetrics {
         render_duration: render_metrics.render_duration,
         dirty_tiles: render_metrics.dirty_tiles,
+        placement: render_metrics.placement,
     })
 }
 

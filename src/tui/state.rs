@@ -115,6 +115,10 @@ pub(super) struct ImageProcessingConfig {
     pub(super) skip_step: u32,
     /// 画像表示のズーム倍率 (fit=1.0)
     pub(super) zoom_factor: f32,
+    /// 水平方向パン（セル単位）
+    pub(super) pan_x: i16,
+    /// 垂直方向パン（セル単位）
+    pub(super) pan_y: i16,
 }
 
 /// パフォーマンス統計を管理する構造体
@@ -122,6 +126,7 @@ pub(super) struct ImageProcessingConfig {
 pub(super) struct PerformanceStats {
     pub(super) last_render_duration: Duration,
     pub(super) last_dirty_tiles: Option<usize>,
+    pub(super) last_image_rect: Option<(u16, u16, u32, u32)>,
     pub(super) cache_requests: u64,
     pub(super) cache_hits: u64,
 }
@@ -287,12 +292,40 @@ impl ViewerState {
         self.image_config.zoom_factor = zoom_factor.clamp(0.1, 4.0);
     }
 
+    pub(super) fn pan_x(&self) -> i16 {
+        self.image_config.pan_x
+    }
+
+    pub(super) fn pan_y(&self) -> i16 {
+        self.image_config.pan_y
+    }
+
+    pub(super) fn pan_by(&mut self, dx: i16, dy: i16) {
+        self.image_config.pan_x = self.image_config.pan_x.saturating_add(dx);
+        self.image_config.pan_y = self.image_config.pan_y.saturating_add(dy);
+    }
+
+    pub(super) fn reset_pan(&mut self) {
+        self.image_config.pan_x = 0;
+        self.image_config.pan_y = 0;
+    }
+
+    pub(super) fn last_image_rect(&self) -> Option<(u16, u16, u32, u32)> {
+        self.perf.last_image_rect
+    }
+
     // ======================
     // Performance Accessors
     // ======================
-    pub(super) fn record_render_metrics(&mut self, duration: Duration, dirty_tiles: Option<usize>) {
+    pub(super) fn record_render_metrics(
+        &mut self,
+        duration: Duration,
+        dirty_tiles: Option<usize>,
+        placement: (u16, u16, u32, u32),
+    ) {
         self.perf.last_render_duration = duration;
         self.perf.last_dirty_tiles = dirty_tiles;
+        self.perf.last_image_rect = Some(placement);
     }
 
     pub(super) fn record_cache_result(&mut self, hit: bool) {

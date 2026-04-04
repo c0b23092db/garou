@@ -12,16 +12,6 @@ pub enum SortField {
     Size,
 }
 
-impl SortField {
-    pub fn next(self) -> Self {
-        match self {
-            Self::Natural => Self::ModifiedTime,
-            Self::ModifiedTime => Self::Size,
-            Self::Size => Self::Natural,
-        }
-    }
-}
-
 pub fn resolve_image_start(
     path: Option<PathBuf>,
     extensions: &[String],

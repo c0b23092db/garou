@@ -62,7 +62,7 @@ pub fn render_image(
     params: ImageRenderParams,
 ) -> Result<ImageRenderMetrics> {
     let render_started_at = Instant::now();
-    queue!(stdout, SavePosition, MoveTo(params.start_x, 1))?;
+    queue!(stdout, SavePosition)?;
     let mut dirty_tiles: Option<usize> = None;
 
     if params.refresh_image {
@@ -83,7 +83,11 @@ pub fn render_image(
         params.start_x,
         params.image_dimensions,
         params.zoom_factor,
+        params.pan_x,
+        params.pan_y,
     );
+
+    queue!(stdout, MoveTo(placement.0, placement.1))?;
 
     let mut upload_completed = false;
 
@@ -169,5 +173,6 @@ pub fn render_image(
     Ok(ImageRenderMetrics {
         render_duration: Instant::now().duration_since(render_started_at),
         dirty_tiles,
+        placement,
     })
 }

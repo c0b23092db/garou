@@ -15,6 +15,7 @@ pub(super) fn zoom_out(redraw_mode: &mut RedrawMode, state: &mut ViewerState) {
 }
 
 pub(super) fn fit_image(redraw_mode: &mut RedrawMode, state: &mut ViewerState) {
+    state.reset_pan();
     apply_zoom(FIT_ZOOM, redraw_mode, state);
 }
 

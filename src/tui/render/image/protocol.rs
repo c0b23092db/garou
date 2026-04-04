@@ -22,7 +22,7 @@ pub fn send_upload(
     placement: Placement,
     upload_payload: &UploadPayload,
 ) -> Result<()> {
-    let (_, display_width_cells, display_height_cells) = placement;
+    let (_, _, display_width_cells, display_height_cells) = placement;
 
     match upload_payload.transport {
         ResolvedTransport::Direct => {
@@ -64,7 +64,7 @@ pub fn send_upload(
 
 /// 既存画像IDを指定セルサイズで再配置する
 pub fn send_place(stdout: &mut io::Stdout, placement: Placement) -> Result<()> {
-    let (_, display_width_cells, display_height_cells) = placement;
+    let (_, _, display_width_cells, display_height_cells) = placement;
     write!(
         stdout,
         "\x1b_Ga=p,C=1,c={},r={},i={}\x1b\\",

@@ -38,6 +38,10 @@ pub struct ImageRenderParams {
     pub skip_step: u32,
     /// 画像表示ズーム倍率 (fit=1.0)
     pub zoom_factor: f32,
+    /// 水平方向パン（セル単位）
+    pub pan_x: i16,
+    /// 垂直方向パン（セル単位）
+    pub pan_y: i16,
 }
 
 /// 画像描画の差分判定に使う状態
@@ -47,8 +51,8 @@ pub struct ImageRenderState {
     pub(super) has_uploaded: bool,
     /// 最後にアップロードした画像の内容のハッシュ値
     pub(super) last_payload_hash: Option<u64>,
-    /// 最後に配置した画像の位置とサイズ (start_x, display_width_cells, display_height_cells)
-    pub(super) last_placement: Option<(u16, u32, u32)>,
+    /// 最後に配置した画像の位置とサイズ (start_x, start_y, display_width_cells, display_height_cells)
+    pub(super) last_placement: Option<(u16, u16, u32, u32)>,
     /// 最後にアップロード済みの RGBA フレーム（差分更新用）
     pub(super) last_rgba_frame: Option<RgbaFrame>,
     /// shared memory 転送時に生存期間を管理する保持領域
@@ -60,6 +64,7 @@ pub struct ImageRenderState {
 pub struct ImageRenderMetrics {
     pub render_duration: Duration,
     pub dirty_tiles: Option<usize>,
+    pub placement: (u16, u16, u32, u32),
 }
 
 impl ImageRenderState {
