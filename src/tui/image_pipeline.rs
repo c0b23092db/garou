@@ -1,8 +1,9 @@
 use anyhow::Result;
-use base64::{Engine as _, engine::general_purpose};
+use base64::{engine::general_purpose, Engine as _};
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use super::{
@@ -17,6 +18,7 @@ pub(super) struct PreparedImagePayload {
     pub(super) payload_hash: u64,
     pub(super) encoded_payload: Arc<str>,
     pub(super) rgba_frame: Option<RgbaFrame>,
+    pub(super) prepare_duration: Duration,
 }
 
 /// ワーカースレッドで画像描画に必要なデータをまとめて準備する
@@ -24,16 +26,21 @@ pub(super) fn prepare_image_payload(
     image_path: &Path,
     diff_mode: crate::model::config::ImageDiffMode,
 ) -> Result<PreparedImagePayload> {
+    let started = Instant::now();
     let bytes = std::fs::read(image_path)?;
-    let image_data: Arc<[u8]> = Arc::from(bytes);
-    let image_dimensions = ::image::image_dimensions(image_path)?;
+    let image_data: Arc<[u8]> = Arc::from(bytes.clone());
+    let image_dimensions = ::image::image_dimensions(image_path).unwrap_or((1, 1));
     let payload_hash = if matches!(diff_mode, crate::model::config::ImageDiffMode::All) {
         0
     } else {
         render_image::hash_image_payload(image_data.as_ref(), diff_mode)
     };
     let encoded_payload = Arc::<str>::from(general_purpose::STANDARD.encode(image_data.as_ref()));
-    let rgba_frame = render_image::decode_rgba_payload(image_data.as_ref());
+    let rgba_frame = if matches!(diff_mode, crate::model::config::ImageDiffMode::All) {
+        None
+    } else {
+        render_image::decode_rgba_payload(&bytes)
+    };
 
     Ok(PreparedImagePayload {
         image_data,
@@ -41,6 +48,7 @@ pub(super) fn prepare_image_payload(
         payload_hash,
         encoded_payload,
         rgba_frame,
+        prepare_duration: started.elapsed(),
     })
 }
 
@@ -61,8 +69,7 @@ pub(super) fn load_image_data(
     }
 
     state.record_cache_result(false);
-    let bytes = std::fs::read(&image_files[index])?;
-    let data: Arc<[u8]> = Arc::from(bytes);
+    let data: Arc<[u8]> = Arc::from(std::fs::read(&image_files[index])?);
     state.image_cache_mut().insert(index, data.clone());
     Ok(data)
 }
@@ -99,9 +106,7 @@ pub(super) fn is_always_upload_mode(diff_mode: crate::model::config::ImageDiffMo
 }
 
 /// 画像データをBase64エンコードして返す関数。キャッシュがあればキャッシュを優先する。
-pub(super) fn load_encoded_payload(
-    image_data: &[u8],
-) -> Arc<str> {
+pub(super) fn load_encoded_payload(image_data: &[u8]) -> Arc<str> {
     Arc::<str>::from(general_purpose::STANDARD.encode(image_data))
 }
 
@@ -155,11 +160,14 @@ pub(super) fn prefetch_neighbors(
             continue;
         }
 
-        if let Ok(bytes) = std::fs::read(&image_files[primary]) {
-            let data: Arc<[u8]> = Arc::from(bytes);
+        if let Ok(data) = std::fs::read(&image_files[primary]).map(Arc::from) {
             state.image_cache_mut().insert(primary, data);
         }
     }
 
     state.set_last_prefetch_state(Some((current_index, state.last_nav_direction, max_steps)));
 }
+
+
+
+

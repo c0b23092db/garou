@@ -8,10 +8,10 @@ output_dir = Path("generated_images")
 output_dir.mkdir(exist_ok=True)
 
 # 生成する回数
-count = 15
+count = 1
 
 # 画像サイズの定義
-sizes = [(2000, 2000)]
+sizes = [(10000, 10000)]
 
 # 指定したpxごとにランダムに色が変わる画像を作成
 block_size = 100

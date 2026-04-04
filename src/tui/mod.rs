@@ -98,7 +98,7 @@ fn viewer_loop(
         width: initial_width,
         height: initial_height,
     };
-    let mut redraw_mode = RedrawMode::FullRefresh;
+    let mut redraw_mode = RedrawMode::HeaderRefresh;
     let debounce_duration = Duration::from_millis(options.preview_debounce);
     let idle_poll_interval = Duration::from_millis(options.poll_interval);
     let idle_prefetch_interval = Duration::from_millis(options.prefetch_interval);
@@ -150,6 +150,16 @@ fn viewer_loop(
         image_render_state: ImageRenderState::new(),
         last_nav_direction: NavDirection::Forward,
     };
+
+    // 初回表示はワーカーで画像準備してから差し替えることで、大画像時のUI停止を抑える。
+    let initial_diff_mode = state.image_diff_mode();
+    submit_preview_request(
+        &preview_req_tx,
+        &image_files,
+        *current_index,
+        &mut state,
+        initial_diff_mode,
+    );
 
     loop {
         while let Ok(response) = preview_resp_rx.try_recv() {
@@ -379,6 +389,7 @@ fn render_current_mode(
     state: &mut ViewerState,
     flags: RenderModeFlags,
 ) -> Result<()> {
+    let processing_started = Instant::now();
     let image_data = load_image_data(image_files, current_index, state)?;
     let image_dimensions = load_image_dimensions(image_files, current_index, state)?;
     let always_upload = is_always_upload_mode(state.image_diff_mode());
@@ -389,6 +400,7 @@ fn render_current_mode(
     };
     let encoded_payload = load_encoded_payload(image_data.as_ref());
     let rgba_frame = load_rgba_frame(current_index, image_data.as_ref(), state);
+    let processing_duration = processing_started.elapsed();
     let sidebar_entries = state
         .sidebar_tree
         .render_entries(image_files.get(current_index));
@@ -428,6 +440,7 @@ fn render_current_mode(
             pan_y: state.pan_y(),
             rgba_frame,
             overlay_visible: state.overlay_visible(),
+            processing_duration,
             cache_hit_rate: state.cache_hit_rate(),
         },
         &mut state.image_render_state,
@@ -508,6 +521,7 @@ fn render_prepared_mode(
             pan_y: state.pan_y(),
             rgba_frame: prepared.rgba_frame,
             overlay_visible: state.overlay_visible(),
+            processing_duration: prepared.prepare_duration,
             cache_hit_rate: state.cache_hit_rate(),
         },
         &mut state.image_render_state,
@@ -637,3 +651,4 @@ fn handle_event(
 
     Ok((should_quit, *current_index != previous_index))
 }
+

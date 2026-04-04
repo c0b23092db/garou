@@ -4,6 +4,8 @@
 mod difference;
 mod layout;
 mod protocol;
+#[allow(dead_code)]
+mod resize;
 mod state;
 mod transport;
 
@@ -100,7 +102,8 @@ pub fn render_image(
         if !matches!(params.diff_mode, ImageDiffMode::All)
             && state.has_uploaded
             && !params.refresh_image
-            && let (Some(prev), Some(next)) = (state.last_rgba_frame.as_ref(), params.rgba_frame.clone())
+            && let (Some(prev), Some(next)) =
+                (state.last_rgba_frame.as_ref(), params.rgba_frame.clone())
             && let Some(rects) = find_dirty_tiles(
                 prev,
                 &next,
@@ -177,3 +180,4 @@ pub fn render_image(
         placement,
     })
 }
+

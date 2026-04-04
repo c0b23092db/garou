@@ -102,6 +102,8 @@ pub struct RenderOptions {
     pub rgba_frame: Option<RgbaFrame>,
     /// 画像情報オーバーレイの表示フラグ
     pub overlay_visible: bool,
+    /// 描画外で発生した画像処理時間（デコード/リサイズ/エンコード等）
+    pub processing_duration: Duration,
     /// 画像キャッシュヒット率 (0.0-1.0)。キャッシュ無効時は None。
     pub cache_hit_rate: Option<f32>,
 }
@@ -174,11 +176,14 @@ pub fn render_frame(
     }
 
     if options.statusbar_visible {
+        let elapsed = render_metrics
+            .render_duration
+            .saturating_add(options.processing_duration);
         render_statusbar(
             stdout,
             term_width,
             term_height,
-            render_metrics.render_duration,
+            elapsed,
             options.image_dimensions,
             options.cache_hit_rate,
             render_metrics.dirty_tiles,
