@@ -1,65 +1,33 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use std::{path::PathBuf, time::Duration};
 
-use super::{
-    debounce::{clear_pending_replace, schedule_replace},
-    state::{NavDirection, RedrawMode, ViewerState},
-};
+use crate::core::SortField;
 
-/// デバウンス設定に基づいて描画モードをスケジュール
-#[inline]
-fn schedule_redraw(
-    redraw_mode: &mut RedrawMode,
-    state: &mut ViewerState,
-    debounce_duration: Duration,
-) {
-    *redraw_mode = if debounce_duration.is_zero() {
-        RedrawMode::ImageReplace
-    } else {
-        RedrawMode::HeaderRefresh
-    };
-    schedule_replace(state, debounce_duration);
-}
+mod clear;
+mod input_move;
+mod open;
+mod sort;
+mod zoom;
 
-/// サイドバーカーソル移動後の処理を統一
-#[inline]
-fn apply_sidebar_cursor_change(
-    current_index: &mut usize,
-    redraw_mode: &mut RedrawMode,
-    state: &mut ViewerState,
-    debounce_duration: Duration,
-) {
-    if let Some(new_index) = state.sidebar_tree.cursor_image_index() {
-        *current_index = new_index;
-        schedule_redraw(redraw_mode, state, debounce_duration);
-    } else {
-        *redraw_mode = RedrawMode::HeaderRefresh;
-    }
-}
+use super::state::{NavDirection, RedrawMode, ViewerState};
 
-/// ナビゲーション後の共通処理（サイドバー非表示時）
-#[inline]
-fn sync_sidebar_to_image(
-    current_index: usize,
-    state: &mut ViewerState,
-    image_files: &[PathBuf],
-    direction: NavDirection,
-) {
-    if let Some(current_path) = image_files.get(current_index) {
-        state.sidebar_tree.sync_cursor_to_image(current_path);
-    }
-    state.last_nav_direction = direction;
-}
+use clear::{clear_and_full_refresh, clear_and_image_refresh};
+use input_move::{apply_sidebar_cursor_change, schedule_redraw, sync_sidebar_to_image};
+use open::open_current_image;
+use sort::apply_sort;
+use zoom::{fit_image, zoom_in, zoom_out};
 
 /// キー入力を処理し、必要に応じて描画モードを更新する
 pub fn process_key(
     key: KeyEvent,
-    image_files: &[PathBuf],
+    image_files: &mut Vec<PathBuf>,
     current_index: &mut usize,
     redraw_mode: &mut RedrawMode,
     state: &mut ViewerState,
     debounce_duration: Duration,
     term_height: u16,
+    sort_field: &mut SortField,
+    sort_descending: &mut bool,
 ) -> bool {
     let image_count = image_files.len();
     if image_count == 0 {
@@ -70,9 +38,7 @@ pub fn process_key(
     match key.code {
         KeyCode::Char('q') | KeyCode::Esc => true,
         KeyCode::Char('o') | KeyCode::Char('O') => {
-            if let Some(image_path) = image_files.get(*current_index) {
-                let _ = open::that(image_path);
-            }
+            open_current_image(image_files, *current_index);
             false
         }
         KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -135,30 +101,128 @@ pub fn process_key(
         }
         KeyCode::Char('s') | KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::ALT) => {
             state.set_sidebar_visible(!state.sidebar_visible());
-            clear_pending_replace(state);
-            *redraw_mode = RedrawMode::FullRefresh;
+            clear_and_full_refresh(redraw_mode, state);
             false
         }
         KeyCode::Char('d') | KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::ALT) => {
             state.set_statusbar_visible(!state.statusbar_visible());
-            clear_pending_replace(state);
-            *redraw_mode = RedrawMode::FullRefresh;
+            clear_and_full_refresh(redraw_mode, state);
             false
         }
         KeyCode::Char('f') | KeyCode::Char('F') if key.modifiers.contains(KeyModifiers::ALT) => {
             state.set_header_visible(!state.header_visible());
-            clear_pending_replace(state);
-            *redraw_mode = RedrawMode::FullRefresh;
+            clear_and_full_refresh(redraw_mode, state);
             false
         }
         KeyCode::Char('r') => {
-            clear_pending_replace(state);
-            *redraw_mode = RedrawMode::ImageRefresh;
+            clear_and_image_refresh(redraw_mode, state);
             false
         }
         KeyCode::Char('R') => {
-            clear_pending_replace(state);
-            *redraw_mode = RedrawMode::FullRefresh;
+            clear_and_full_refresh(redraw_mode, state);
+            false
+        }
+        KeyCode::Char('+')  => {
+            zoom_in(redraw_mode, state);
+            false
+        }
+        KeyCode::Char('-') => {
+            zoom_out(redraw_mode, state);
+            false
+        }
+        KeyCode::Char('0') => {
+            fit_image(redraw_mode, state);
+            false
+        }
+        KeyCode::Char(',') => {
+            apply_sort(
+                image_files,
+                current_index,
+                redraw_mode,
+                state,
+                sort_field,
+                sort_descending,
+                sort_field.next(),
+                false,
+            );
+            false
+        }
+        KeyCode::Char('m') => {
+            apply_sort(
+                image_files,
+                current_index,
+                redraw_mode,
+                state,
+                sort_field,
+                sort_descending,
+                SortField::ModifiedTime,
+                false,
+            );
+            false
+        }
+        KeyCode::Char('M') => {
+            apply_sort(
+                image_files,
+                current_index,
+                redraw_mode,
+                state,
+                sort_field,
+                sort_descending,
+                SortField::ModifiedTime,
+                true,
+            );
+            false
+        }
+        KeyCode::Char('n') => {
+            apply_sort(
+                image_files,
+                current_index,
+                redraw_mode,
+                state,
+                sort_field,
+                sort_descending,
+                SortField::Natural,
+                false,
+            );
+            false
+        }
+        KeyCode::Char('N') => {
+            apply_sort(
+                image_files,
+                current_index,
+                redraw_mode,
+                state,
+                sort_field,
+                sort_descending,
+                SortField::Natural,
+                true,
+            );
+            false
+        }
+        KeyCode::Char('s') => {
+            apply_sort(
+                image_files,
+                current_index,
+                redraw_mode,
+                state,
+                sort_field,
+                sort_descending,
+                SortField::Size,
+                false,
+            );
+            false
+        }
+        KeyCode::Char('S') => {
+            apply_sort(
+                image_files,
+                current_index,
+                redraw_mode,
+                state,
+                sort_field,
+                sort_descending,
+                SortField::Size,
+                true,
+            );
             false
         }
         KeyCode::Char('j') | KeyCode::Char('J') | KeyCode::Down if state.sidebar_visible() => {

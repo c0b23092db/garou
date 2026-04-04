@@ -1,5 +1,5 @@
 use crossterm::style::Color;
-use std::{collections::HashMap, time::Instant};
+use std::{collections::HashMap, time::Duration, time::Instant};
 
 use crate::model::config::{ImageDiffMode, TransportMode};
 
@@ -113,6 +113,17 @@ pub(super) struct ImageProcessingConfig {
     pub(super) tile_grid: u32,
     /// 差分判定の画素間引き設定 (0,2,4)
     pub(super) skip_step: u32,
+    /// 画像表示のズーム倍率 (fit=1.0)
+    pub(super) zoom_factor: f32,
+}
+
+/// パフォーマンス統計を管理する構造体
+#[derive(Debug, Default)]
+pub(super) struct PerformanceStats {
+    pub(super) last_render_duration: Duration,
+    pub(super) last_dirty_tiles: Option<usize>,
+    pub(super) cache_requests: u64,
+    pub(super) cache_hits: u64,
 }
 
 /// ビューワーの状態を管理する構造体
@@ -124,6 +135,7 @@ pub(super) struct ViewerState {
     pub(super) cache: CacheState,
     pub(super) preview: PreviewState,
     pub(super) image_config: ImageProcessingConfig,
+    pub(super) perf: PerformanceStats,
     pub(super) sidebar_tree: SidebarTree,
     pub(super) image_render_state: ImageRenderState,
     pub(super) last_nav_direction: NavDirection,
@@ -265,5 +277,36 @@ impl ViewerState {
 
     pub(super) fn skip_step(&self) -> u32 {
         self.image_config.skip_step
+    }
+
+    pub(super) fn zoom_factor(&self) -> f32 {
+        self.image_config.zoom_factor
+    }
+
+    pub(super) fn set_zoom_factor(&mut self, zoom_factor: f32) {
+        self.image_config.zoom_factor = zoom_factor.clamp(0.1, 4.0);
+    }
+
+    // ======================
+    // Performance Accessors
+    // ======================
+    pub(super) fn record_render_metrics(&mut self, duration: Duration, dirty_tiles: Option<usize>) {
+        self.perf.last_render_duration = duration;
+        self.perf.last_dirty_tiles = dirty_tiles;
+    }
+
+    pub(super) fn record_cache_result(&mut self, hit: bool) {
+        self.perf.cache_requests = self.perf.cache_requests.saturating_add(1);
+        if hit {
+            self.perf.cache_hits = self.perf.cache_hits.saturating_add(1);
+        }
+    }
+
+    pub(super) fn cache_hit_rate(&self) -> Option<f32> {
+        if self.perf.cache_requests == 0 {
+            None
+        } else {
+            Some(self.perf.cache_hits as f32 / self.perf.cache_requests as f32)
+        }
     }
 }

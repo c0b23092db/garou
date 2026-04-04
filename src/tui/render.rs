@@ -10,6 +10,7 @@ use std::{
     io::{self, Write},
     path::PathBuf,
     sync::Arc,
+    time::Duration,
 };
 
 pub mod filetree;
@@ -23,6 +24,12 @@ use self::{
     image::{ImageRenderParams, ImageRenderState, render_image},
     statusbar::render_statusbar,
 };
+
+#[derive(Debug, Clone, Copy)]
+pub struct FrameRenderMetrics {
+    pub render_duration: Duration,
+    pub dirty_tiles: Option<usize>,
+}
 
 /// 描画に必要な入力データを管理する構造体
 #[derive(Debug, Clone)]
@@ -82,6 +89,10 @@ pub struct RenderOptions {
     pub tile_grid: u32,
     /// 差分判定の画素間引き設定
     pub skip_step: u32,
+    /// 画像表示ズーム倍率 (fit=1.0)
+    pub zoom_factor: f32,
+    /// 画像キャッシュヒット率 (0.0-1.0)。キャッシュ無効時は None。
+    pub cache_hit_rate: Option<f32>,
 }
 
 /// 画面全体を描画する関数
@@ -90,7 +101,7 @@ pub fn render_frame(
     input: FrameRenderInput<'_>,
     options: RenderOptions,
     image_render_state: &mut ImageRenderState,
-) -> Result<()> {
+) -> Result<FrameRenderMetrics> {
     let term_width = input.term_width as u32;
     let term_height = input.term_height as u32;
 
@@ -121,7 +132,7 @@ pub fn render_frame(
 
     let available_height = term_height.saturating_sub(2);
 
-    let render_duration = render_image(
+    let render_metrics = render_image(
         stdout,
         image_render_state,
         ImageRenderParams {
@@ -139,6 +150,7 @@ pub fn render_frame(
             dirty_ratio: options.dirty_ratio,
             tile_grid: options.tile_grid,
             skip_step: options.skip_step,
+            zoom_factor: options.zoom_factor,
         },
     )?;
 
@@ -147,8 +159,10 @@ pub fn render_frame(
             stdout,
             term_width,
             term_height,
-            render_duration,
+            render_metrics.render_duration,
             options.image_dimensions,
+            options.cache_hit_rate,
+            render_metrics.dirty_tiles,
             options.statusbar_bg_color,
             options.statusbar_fg_color,
         )?;
@@ -161,7 +175,10 @@ pub fn render_frame(
     }
 
     stdout.flush()?;
-    Ok(())
+    Ok(FrameRenderMetrics {
+        render_duration: render_metrics.render_duration,
+        dirty_tiles: render_metrics.dirty_tiles,
+    })
 }
 
 /// ヘッダーのみを描画する関数

@@ -4,6 +4,7 @@
 - imageによるリサイズ
 - RGBAキャッシュ
 - u32チャンク比較
+- filebarを消しているとき、statusbarが画像切り替え時に点滅するバグ
 
 ## 画像の表示ができない・遅い
 transport_mode = file

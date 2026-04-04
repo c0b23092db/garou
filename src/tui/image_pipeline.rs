@@ -53,9 +53,11 @@ pub(super) fn load_image_data(
     }
 
     if let Some(cached) = state.image_cache_mut().get(index) {
+        state.record_cache_result(true);
         return Ok(cached);
     }
 
+    state.record_cache_result(false);
     let bytes = std::fs::read(&image_files[index])?;
     let data: Arc<[u8]> = Arc::from(bytes);
     state.image_cache_mut().insert(index, data.clone());

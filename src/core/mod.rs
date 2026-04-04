@@ -3,6 +3,24 @@ use std::cmp::Ordering;
 use std::env::current_dir;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortField {
+    Natural,
+    ModifiedTime,
+    Size,
+}
+
+impl SortField {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Natural => Self::ModifiedTime,
+            Self::ModifiedTime => Self::Size,
+            Self::Size => Self::Natural,
+        }
+    }
+}
 
 pub fn resolve_image_start(
     path: Option<PathBuf>,
@@ -117,6 +135,42 @@ pub fn natural_compare_paths_by_name(a: &Path, b: &Path) -> Ordering {
     let a_name = a.file_name().and_then(|n| n.to_str()).unwrap_or_default();
     let b_name = b.file_name().and_then(|n| n.to_str()).unwrap_or_default();
     natural_compare(a_name, b_name)
+}
+
+/// 画像ファイルリストを指定条件でソートする関数
+pub fn sort_image_files(image_files: &mut [PathBuf], sort_field: SortField, descending: bool) {
+    image_files.sort_by(|a, b| {
+        let ord = match sort_field {
+            SortField::Natural => natural_compare_paths_by_name(a, b),
+            SortField::ModifiedTime => compare_modified_time(a, b),
+            SortField::Size => compare_file_size(a, b),
+        }
+        .then_with(|| natural_compare_paths_by_name(a, b));
+
+        if descending { ord.reverse() } else { ord }
+    });
+}
+
+fn compare_modified_time(a: &Path, b: &Path) -> Ordering {
+    let a_time = fs::metadata(a)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let b_time = fs::metadata(b)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    a_time.cmp(&b_time)
+}
+
+fn compare_file_size(a: &Path, b: &Path) -> Ordering {
+    let a_size = fs::metadata(a).map(|m| m.len()).unwrap_or(0);
+    let b_size = fs::metadata(b).map(|m| m.len()).unwrap_or(0);
+    a_size.cmp(&b_size)
 }
 
 /// 文字列を自然順で比較する関数

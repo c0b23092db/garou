@@ -313,6 +313,78 @@ impl SidebarTree {
         self.set_cursor_to_path(image_path);
     }
 
+    /// 画像パスとインデックスの対応表を更新し、必要ならカーソル同期する
+    pub(in crate::tui) fn refresh_image_index_map(
+        &mut self,
+        image_files: &[PathBuf],
+        current_image_path: Option<&Path>,
+    ) {
+        self.image_index_by_path = image_files
+            .iter()
+            .enumerate()
+            .map(|(idx, path)| (path.clone(), idx))
+            .collect();
+
+        self.reorder_tree_by_image_index();
+        self.rebuild_visible();
+
+        if let Some(path) = current_image_path {
+            self.sync_cursor_to_image(path);
+        }
+    }
+
+    /// 画像インデックス順にファイルノードを並べ替える
+    fn reorder_tree_by_image_index(&mut self) {
+        let node_meta: Vec<(bool, PathBuf)> = self
+            .nodes
+            .iter()
+            .map(|node| (node.is_dir, node.path.clone()))
+            .collect();
+
+        Self::reorder_node_ids(&mut self.roots, &node_meta, &self.image_index_by_path);
+
+        for node_id in 0..self.nodes.len() {
+            if self.nodes[node_id].is_dir {
+                Self::reorder_node_ids(
+                    &mut self.nodes[node_id].children,
+                    &node_meta,
+                    &self.image_index_by_path,
+                );
+            }
+        }
+    }
+
+    fn reorder_node_ids(
+        node_ids: &mut Vec<usize>,
+        node_meta: &[(bool, PathBuf)],
+        image_index_by_path: &HashMap<PathBuf, usize>,
+    ) {
+        let mut dirs = Vec::new();
+        let mut files = Vec::new();
+
+        for &id in node_ids.iter() {
+            if node_meta[id].0 {
+                dirs.push(id);
+            } else {
+                files.push(id);
+            }
+        }
+
+        dirs.sort_by(|a, b| natural_compare_paths_by_name(&node_meta[*a].1, &node_meta[*b].1));
+        files.sort_by(|a, b| {
+            let a_idx = image_index_by_path.get(&node_meta[*a].1).copied();
+            let b_idx = image_index_by_path.get(&node_meta[*b].1).copied();
+
+            a_idx
+                .cmp(&b_idx)
+                .then_with(|| natural_compare_paths_by_name(&node_meta[*a].1, &node_meta[*b].1))
+        });
+
+        node_ids.clear();
+        node_ids.extend(dirs);
+        node_ids.extend(files);
+    }
+
     /// 描画用のエントリを生成する関数
     pub(in crate::tui) fn render_entries(
         &self,

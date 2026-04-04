@@ -18,11 +18,10 @@ use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
     io::{self, Write},
-    time::Duration,
     time::Instant,
 };
 
-pub use state::{ImageRenderParams, ImageRenderState};
+pub use state::{ImageRenderMetrics, ImageRenderParams, ImageRenderState};
 
 use self::{
     difference::{decode_rgba_frame, dirty_ratio_from_area, extract_rect_rgba, find_dirty_tiles},
@@ -61,9 +60,10 @@ pub fn render_image(
     stdout: &mut io::Stdout,
     state: &mut ImageRenderState,
     params: ImageRenderParams,
-) -> Result<Duration> {
+) -> Result<ImageRenderMetrics> {
     let render_started_at = Instant::now();
     queue!(stdout, SavePosition, MoveTo(params.start_x, 1))?;
+    let mut dirty_tiles: Option<usize> = None;
 
     if params.refresh_image {
         send_delete(stdout)?;
@@ -82,6 +82,7 @@ pub fn render_image(
         params.available_height,
         params.start_x,
         params.image_dimensions,
+        params.zoom_factor,
     );
 
     let mut upload_completed = false;
@@ -103,6 +104,7 @@ pub fn render_image(
                 params.skip_step,
             )
         {
+            dirty_tiles = Some(rects.len());
             if rects.is_empty() {
                 patched = true;
                 state.last_rgba_frame = Some(next);
@@ -164,5 +166,8 @@ pub fn render_image(
     }
 
     queue!(stdout, RestorePosition)?;
-    Ok(Instant::now().duration_since(render_started_at))
+    Ok(ImageRenderMetrics {
+        render_duration: Instant::now().duration_since(render_started_at),
+        dirty_tiles,
+    })
 }

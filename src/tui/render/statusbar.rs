@@ -15,6 +15,8 @@ pub fn render_statusbar(
     term_height: u32,
     elapsed: Duration,
     image_dimensions: (u32, u32),
+    cache_hit_rate: Option<f32>,
+    dirty_tiles: Option<usize>,
     statusbar_bg_color: Color,
     statusbar_fg_color: Color,
 ) -> Result<()> {
@@ -24,7 +26,16 @@ pub fn render_statusbar(
 
     let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
     let (img_width, img_height) = image_dimensions;
-    let text = format!("{:.1}ms | {}x{}", elapsed_ms, img_width, img_height);
+    let hit_text = cache_hit_rate
+        .map(|rate| format!("hit:{:.0}%", rate * 100.0))
+        .unwrap_or_else(|| "hit:--".to_string());
+    let dirty_text = dirty_tiles
+        .map(|count| format!("dirty:{}", count))
+        .unwrap_or_else(|| "dirty:--".to_string());
+    let text = format!(
+        "{:.1}ms | {}x{} | {} | {}",
+        elapsed_ms, img_width, img_height, hit_text, dirty_text
+    );
 
     // 最下行での自動折り返しスクロールを防ぐため、末尾1セルは使わない。
     let width = term_width.saturating_sub(1) as usize;

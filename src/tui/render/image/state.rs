@@ -1,7 +1,7 @@
 //! 画像描画の状態と入力パラメータを定義する。
 
 use crate::model::config::{ImageDiffMode, TransportMode};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use super::transport::SharedMemoryState;
 
@@ -36,6 +36,8 @@ pub struct ImageRenderParams {
     pub tile_grid: u32,
     /// 差分判定の画素間引き設定
     pub skip_step: u32,
+    /// 画像表示ズーム倍率 (fit=1.0)
+    pub zoom_factor: f32,
 }
 
 /// 画像描画の差分判定に使う状態
@@ -51,6 +53,13 @@ pub struct ImageRenderState {
     pub(super) last_rgba_frame: Option<RgbaFrame>,
     /// shared memory 転送時に生存期間を管理する保持領域
     pub(super) shared_memory: SharedMemoryState,
+}
+
+/// 画像描画で収集したメトリクス
+#[derive(Debug, Clone, Copy)]
+pub struct ImageRenderMetrics {
+    pub render_duration: Duration,
+    pub dirty_tiles: Option<usize>,
 }
 
 impl ImageRenderState {

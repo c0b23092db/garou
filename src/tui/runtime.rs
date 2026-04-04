@@ -90,6 +90,12 @@ impl ImageCache {
         self.evict_if_needed();
     }
 
+    pub(super) fn clear(&mut self) {
+        self.map.clear();
+        self.order.clear();
+        self.current_bytes = 0;
+    }
+
     /// キャッシュにアクセスしたキーを最新にする関数
     fn touch(&mut self, key: usize) {
         if let Some(pos) = self.order.iter().position(|&k| k == key) {

@@ -1,3 +1,4 @@
+use crate::core::SortField;
 use anyhow::Result;
 use crossterm::{
     cursor::{Hide, Show},
@@ -32,7 +33,7 @@ use render::{
     image::ImageRenderState, render_frame, render_header_only,
 };
 use runtime::ImageCache;
-use state::{CacheState, ImageProcessingConfig, PreviewState, UiState, Viewport};
+use state::{CacheState, ImageProcessingConfig, PerformanceStats, PreviewState, UiState, Viewport};
 use state::{NavDirection, RedrawMode, ViewerState};
 
 pub use state::ConfigOption;
@@ -89,6 +90,7 @@ fn viewer_loop(
     current_index: &mut usize,
     options: ConfigOption,
 ) -> Result<()> {
+    let mut image_files = image_files.to_vec();
     let (preview_req_tx, preview_resp_rx, preview_join) = spawn_preview_worker();
     let (initial_width, initial_height) = size()?;
     let mut viewport = Viewport {
@@ -99,6 +101,8 @@ fn viewer_loop(
     let debounce_duration = Duration::from_millis(options.preview_debounce);
     let idle_poll_interval = Duration::from_millis(options.poll_interval);
     let idle_prefetch_interval = Duration::from_millis(options.prefetch_interval);
+    let mut sort_field = SortField::Natural;
+    let mut sort_descending = false;
     let mut pending_preview_payload: Option<(usize, u64, PreparedImagePayload)> = None;
     let mut state = ViewerState {
         pending_replace: false,
@@ -131,9 +135,11 @@ fn viewer_loop(
             dirty_ratio: options.dirty_ratio.clamp(0.0, 1.0),
             tile_grid: options.tile_grid.max(1),
             skip_step: options.skip_step,
+            zoom_factor: 1.0,
         },
+        perf: PerformanceStats::default(),
         sidebar_tree: SidebarTree::from_image_files(
-            image_files,
+            &image_files,
             *current_index,
             &options.image_extensions,
         ),
@@ -165,7 +171,7 @@ fn viewer_loop(
                 render_header_only(
                     stdout,
                     HeaderRenderInput {
-                        image_files,
+                        image_files: &image_files,
                         current_index: *current_index,
                         sidebar_entries: &sidebar_entries,
                         term_width: viewport.width,
@@ -182,7 +188,7 @@ fn viewer_loop(
             RedrawMode::FullRefresh => {
                 render_current_mode(
                     stdout,
-                    image_files,
+                    &image_files,
                     *current_index,
                     &viewport,
                     &mut state,
@@ -197,7 +203,7 @@ fn viewer_loop(
             RedrawMode::LayoutRefresh => {
                 render_current_mode(
                     stdout,
-                    image_files,
+                    &image_files,
                     *current_index,
                     &viewport,
                     &mut state,
@@ -212,7 +218,7 @@ fn viewer_loop(
             RedrawMode::ImageRefresh => {
                 render_current_mode(
                     stdout,
-                    image_files,
+                    &image_files,
                     *current_index,
                     &viewport,
                     &mut state,
@@ -232,7 +238,7 @@ fn viewer_loop(
                 {
                     render_prepared_mode(
                         stdout,
-                        image_files,
+                        &image_files,
                         *current_index,
                         &viewport,
                         &mut state,
@@ -258,7 +264,7 @@ fn viewer_loop(
                 let diff_mode = state.image_diff_mode();
                 submit_preview_request(
                     &preview_req_tx,
-                    image_files,
+                    &image_files,
                     *current_index,
                     &mut state,
                     diff_mode,
@@ -270,7 +276,9 @@ fn viewer_loop(
             if event::poll(Duration::from_millis(0))?
                 && handle_event(
                     event::read()?,
-                    image_files,
+                    &mut image_files,
+                    &mut sort_field,
+                    &mut sort_descending,
                     current_index,
                     &mut redraw_mode,
                     &mut state,
@@ -291,7 +299,9 @@ fn viewer_loop(
         if event::poll(idle_poll_interval)? {
             let (should_quit, index_changed) = handle_event(
                 event::read()?,
-                image_files,
+                &mut image_files,
+                &mut sort_field,
+                &mut sort_descending,
                 current_index,
                 &mut redraw_mode,
                 &mut state,
@@ -304,7 +314,7 @@ fn viewer_loop(
                     let diff_mode = state.image_diff_mode();
                     submit_preview_request(
                         &preview_req_tx,
-                        image_files,
+                        &image_files,
                         *current_index,
                         &mut state,
                         diff_mode,
@@ -327,7 +337,7 @@ fn viewer_loop(
                 .is_none_or(|last| now.duration_since(last) >= idle_prefetch_interval)
             {
                 let prefetch_steps = state.prefetch_size();
-                prefetch_neighbors(image_files, *current_index, &mut state, prefetch_steps);
+                prefetch_neighbors(&image_files, *current_index, &mut state, prefetch_steps);
                 state.set_last_idle_prefetch_at(Some(now));
             }
         }
@@ -361,7 +371,7 @@ fn render_current_mode(
         .sidebar_tree
         .render_entries(image_files.get(current_index));
 
-    render_frame(
+    let frame_metrics = render_frame(
         stdout,
         FrameRenderInput {
             image_files,
@@ -391,9 +401,12 @@ fn render_current_mode(
             dirty_ratio: state.dirty_ratio(),
             tile_grid: state.tile_grid(),
             skip_step: state.skip_step(),
+            zoom_factor: state.zoom_factor(),
+            cache_hit_rate: state.cache_hit_rate(),
         },
         &mut state.image_render_state,
     )?;
+    state.record_render_metrics(frame_metrics.render_duration, frame_metrics.dirty_tiles);
 
     if flags.prefetch_after {
         let idle_prefetch_steps = state.prefetch_size();
@@ -430,7 +443,7 @@ fn render_prepared_mode(
         .payload_hash_cache_mut()
         .insert(current_index, prepared.payload_hash);
 
-    render_frame(
+    let frame_metrics = render_frame(
         stdout,
         FrameRenderInput {
             image_files,
@@ -460,9 +473,12 @@ fn render_prepared_mode(
             dirty_ratio: state.dirty_ratio(),
             tile_grid: state.tile_grid(),
             skip_step: state.skip_step(),
+            zoom_factor: state.zoom_factor(),
+            cache_hit_rate: state.cache_hit_rate(),
         },
         &mut state.image_render_state,
     )?;
+    state.record_render_metrics(frame_metrics.render_duration, frame_metrics.dirty_tiles);
 
     if flags.prefetch_after {
         let idle_prefetch_steps = state.prefetch_size();
@@ -540,7 +556,9 @@ fn spawn_preview_worker() -> (
 /// 入力イベントを処理する関数
 fn handle_event(
     event: Event,
-    image_files: &[PathBuf],
+    image_files: &mut Vec<PathBuf>,
+    sort_field: &mut SortField,
+    sort_descending: &mut bool,
     current_index: &mut usize,
     redraw_mode: &mut RedrawMode,
     state: &mut ViewerState,
@@ -558,6 +576,8 @@ fn handle_event(
             state,
             debounce_duration,
             viewport.height,
+            sort_field,
+            sort_descending,
         ),
         Event::Mouse(mouse) => process_mouse(
             mouse,
