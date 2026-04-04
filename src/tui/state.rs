@@ -305,6 +305,11 @@ impl ViewerState {
         self.image_config.pan_y = self.image_config.pan_y.saturating_add(dy);
     }
 
+    pub(super) fn set_pan(&mut self, pan_x: i16, pan_y: i16) {
+        self.image_config.pan_x = pan_x;
+        self.image_config.pan_y = pan_y;
+    }
+
     pub(super) fn reset_pan(&mut self) {
         self.image_config.pan_x = 0;
         self.image_config.pan_y = 0;

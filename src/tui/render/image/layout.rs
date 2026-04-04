@@ -37,15 +37,15 @@ pub fn compute_placement(
     display_width_cells = display_width_cells.clamp(1, max_zoom_width);
     display_height_cells = display_height_cells.clamp(1, max_zoom_height);
 
-    let max_pan_x = i16::try_from(max_display_width.min(i16::MAX as u32)).unwrap_or(i16::MAX);
-    let max_pan_y = i16::try_from(max_display_height.min(i16::MAX as u32)).unwrap_or(i16::MAX);
-    let pan_x = pan_x.clamp(-max_pan_x, max_pan_x);
-    let pan_y = pan_y.clamp(-max_pan_y, max_pan_y);
-
-    let shifted_x = (i32::from(start_x) + i32::from(pan_x)).max(i32::from(start_x));
-    let shifted_y = (1i32 + i32::from(pan_y)).max(1);
+    let shifted_x = (i32::from(start_x) + i32::from(pan_x)).max(0);
+    let shifted_y = (1i32 + i32::from(pan_y)).max(0);
     let shifted_x = u16::try_from(shifted_x).unwrap_or(u16::MAX);
     let shifted_y = u16::try_from(shifted_y).unwrap_or(u16::MAX);
 
-    (shifted_x, shifted_y, display_width_cells, display_height_cells)
+    (
+        shifted_x,
+        shifted_y,
+        display_width_cells,
+        display_height_cells,
+    )
 }

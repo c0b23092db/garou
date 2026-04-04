@@ -85,6 +85,12 @@ Options:
 - **左クリック**: ファイルを選択
 - **ホイール**: カーソルを移動
 
+### バグがある操作
+- （preview）`0`: 画像のフィット
+- （preview）`+`: 画像の拡大
+- （preview）`-`: 画像の縮小
+- （preview）`Shift + J`, `Shift + K`, `Shift + H`, `Shift + L`: 画像の移動
+
 ## ⚙️ 設定ファイル
 `~/.config/garou/config.toml`を読み込みます。
 
@@ -204,6 +210,10 @@ preview_debounce = 50
 lru_size = 5
 prefetch_size = 1
 ```
+
+## 認知しているバグ
+- 大きい画像が開けない
+- 画像のパンがうまく動作しない
 
 ## TODO
 - **差分表示の高速表示**
