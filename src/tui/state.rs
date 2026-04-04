@@ -73,6 +73,7 @@ pub(super) struct UiState {
     pub(super) sidebar_size: u16,
     pub(super) header_visible: bool,
     pub(super) statusbar_visible: bool,
+    pub(super) overlay_visible: bool,
     pub(super) header_bg_color: Color,
     pub(super) header_fg_color: Color,
     pub(super) statusbar_bg_color: Color,
@@ -172,6 +173,14 @@ impl ViewerState {
 
     pub(super) fn set_statusbar_visible(&mut self, visible: bool) {
         self.ui_state.statusbar_visible = visible;
+    }
+
+    pub(super) fn overlay_visible(&self) -> bool {
+        self.ui_state.overlay_visible
+    }
+
+    pub(super) fn set_overlay_visible(&mut self, visible: bool) {
+        self.ui_state.overlay_visible = visible;
     }
 
     pub(super) fn sidebar_size(&self) -> u16 {

@@ -112,6 +112,7 @@ fn viewer_loop(
             sidebar_size: options.sidebar_size,
             header_visible: options.header_visible,
             statusbar_visible: options.statusbar_visible,
+            overlay_visible: false,
             header_bg_color: options.header_bg_color,
             header_fg_color: options.header_fg_color,
             statusbar_bg_color: options.statusbar_bg_color,
@@ -167,6 +168,23 @@ fn viewer_loop(
         match redraw_mode {
             RedrawMode::Idle => {}
             RedrawMode::HeaderRefresh => {
+                if state.overlay_visible() {
+                    render_current_mode(
+                        stdout,
+                        &image_files,
+                        *current_index,
+                        &viewport,
+                        &mut state,
+                        RenderModeFlags {
+                            refresh_image: false,
+                            full_refresh: false,
+                            prefetch_after: false,
+                        },
+                    )?;
+                    redraw_mode = RedrawMode::Idle;
+                    continue;
+                }
+
                 let sidebar_entries = state
                     .sidebar_tree
                     .render_entries(image_files.get(*current_index));
@@ -406,6 +424,7 @@ fn render_current_mode(
             zoom_factor: state.zoom_factor(),
             pan_x: state.pan_x(),
             pan_y: state.pan_y(),
+            overlay_visible: state.overlay_visible(),
             cache_hit_rate: state.cache_hit_rate(),
         },
         &mut state.image_render_state,
@@ -484,6 +503,7 @@ fn render_prepared_mode(
             zoom_factor: state.zoom_factor(),
             pan_x: state.pan_x(),
             pan_y: state.pan_y(),
+            overlay_visible: state.overlay_visible(),
             cache_hit_rate: state.cache_hit_rate(),
         },
         &mut state.image_render_state,

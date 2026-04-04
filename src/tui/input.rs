@@ -84,6 +84,12 @@ pub fn process_key(
             clear_and_full_refresh(redraw_mode, state);
             false
         }
+        // Tab: 画像情報オーバーレイの表示切替
+        KeyCode::Tab => {
+            state.set_overlay_visible(!state.overlay_visible());
+            clear_and_full_refresh(redraw_mode, state);
+            false
+        }
         /* サイドバーのカーソル移動 */
         // j/k: サイドバーでのカーソル移動
         KeyCode::Char('j') | KeyCode::Down if state.sidebar_visible() => {

@@ -16,12 +16,14 @@ use std::{
 pub mod filetree;
 pub mod header;
 pub mod image;
+pub mod overlay;
 pub mod statusbar;
 
 use self::{
     filetree::{FileTreeEntry, render_filetree},
     header::render_header,
     image::{ImageRenderParams, ImageRenderState, render_image},
+    overlay::{build_overlay_info, render_overlay},
     statusbar::render_statusbar,
 };
 
@@ -96,6 +98,8 @@ pub struct RenderOptions {
     pub pan_x: i16,
     /// 垂直方向パン（セル単位）
     pub pan_y: i16,
+    /// 画像情報オーバーレイの表示フラグ
+    pub overlay_visible: bool,
     /// 画像キャッシュヒット率 (0.0-1.0)。キャッシュ無効時は None。
     pub cache_hit_rate: Option<f32>,
 }
@@ -184,6 +188,13 @@ pub fn render_frame(
             MoveTo(0, term_height.saturating_sub(1) as u16),
             Clear(ClearType::CurrentLine)
         )?;
+    }
+
+    if options.overlay_visible
+        && let Some(path) = input.image_files.get(input.current_index)
+    {
+        let info = build_overlay_info(path, options.image_dimensions);
+        render_overlay(stdout, term_width, term_height, &info)?;
     }
 
     stdout.flush()?;
