@@ -22,7 +22,7 @@ pub mod statusbar;
 use self::{
     filetree::{FileTreeEntry, render_filetree},
     header::render_header,
-    image::{ImageRenderParams, ImageRenderState, render_image},
+    image::{ImageRenderParams, ImageRenderState, RgbaFrame, render_image},
     overlay::{build_overlay_info, render_overlay},
     statusbar::render_statusbar,
 };
@@ -98,6 +98,8 @@ pub struct RenderOptions {
     pub pan_x: i16,
     /// 垂直方向パン（セル単位）
     pub pan_y: i16,
+    /// デコード済みRGBAフレーム（キャッシュ）
+    pub rgba_frame: Option<RgbaFrame>,
     /// 画像情報オーバーレイの表示フラグ
     pub overlay_visible: bool,
     /// 画像キャッシュヒット率 (0.0-1.0)。キャッシュ無効時は None。
@@ -161,6 +163,7 @@ pub fn render_frame(
             zoom_factor: options.zoom_factor,
             pan_x: options.pan_x,
             pan_y: options.pan_y,
+            rgba_frame: options.rgba_frame,
         },
     )?;
 

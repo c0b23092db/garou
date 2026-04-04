@@ -42,6 +42,8 @@ pub struct ImageRenderParams {
     pub pan_x: i16,
     /// 垂直方向パン（セル単位）
     pub pan_y: i16,
+    /// デコード済みRGBAフレーム（キャッシュ）
+    pub rgba_frame: Option<RgbaFrame>,
 }
 
 /// 画像描画の差分判定に使う状態

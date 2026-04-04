@@ -21,10 +21,10 @@ use std::{
     time::Instant,
 };
 
-pub use state::{ImageRenderMetrics, ImageRenderParams, ImageRenderState};
+pub use state::{ImageRenderMetrics, ImageRenderParams, ImageRenderState, RgbaFrame};
 
 use self::{
-    difference::{decode_rgba_frame, dirty_ratio_from_area, extract_rect_rgba, find_dirty_tiles},
+    difference::{dirty_ratio_from_area, extract_rect_rgba, find_dirty_tiles},
     layout::compute_placement,
     protocol::{send_delete, send_patch_rgba, send_place, send_upload},
     transport::{prepare_upload_payload, resolve_transport_mode},
@@ -53,6 +53,10 @@ pub(in crate::tui) fn hash_image_payload(image_data: &[u8], diff_mode: ImageDiff
         }
     }
     hasher.finish()
+}
+
+pub(in crate::tui) fn decode_rgba_payload(image_data: &[u8]) -> Option<RgbaFrame> {
+    difference::decode_rgba_frame(image_data)
 }
 
 /// 画像をターミナルに描画する。
@@ -96,10 +100,7 @@ pub fn render_image(
         if !matches!(params.diff_mode, ImageDiffMode::All)
             && state.has_uploaded
             && !params.refresh_image
-            && let (Some(prev), Some(next)) = (
-                state.last_rgba_frame.as_ref(),
-                decode_rgba_frame(params.image_data.as_ref()),
-            )
+            && let (Some(prev), Some(next)) = (state.last_rgba_frame.as_ref(), params.rgba_frame.clone())
             && let Some(rects) = find_dirty_tiles(
                 prev,
                 &next,
@@ -141,7 +142,7 @@ pub fn render_image(
             state.last_rgba_frame = if matches!(params.diff_mode, ImageDiffMode::All) {
                 None
             } else {
-                decode_rgba_frame(params.image_data.as_ref())
+                params.rgba_frame.clone()
             };
 
             let requested = resolve_transport_mode(params.transport_mode);

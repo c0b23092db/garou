@@ -25,7 +25,8 @@ mod state;
 
 use image_pipeline::{
     PreparedImagePayload, is_always_upload_mode, load_encoded_payload, load_image_data,
-    load_image_dimensions, load_payload_hash, prefetch_neighbors, prepare_image_payload,
+    load_image_dimensions, load_payload_hash, load_rgba_frame, prefetch_neighbors,
+    prepare_image_payload,
 };
 use input::{process_key, process_mouse};
 use render::{
@@ -386,7 +387,8 @@ fn render_current_mode(
     } else {
         load_payload_hash(current_index, image_data.as_ref(), state)
     };
-    let encoded_payload = load_encoded_payload(current_index, image_data.as_ref(), state);
+    let encoded_payload = load_encoded_payload(image_data.as_ref());
+    let rgba_frame = load_rgba_frame(current_index, image_data.as_ref(), state);
     let sidebar_entries = state
         .sidebar_tree
         .render_entries(image_files.get(current_index));
@@ -424,6 +426,7 @@ fn render_current_mode(
             zoom_factor: state.zoom_factor(),
             pan_x: state.pan_x(),
             pan_y: state.pan_y(),
+            rgba_frame,
             overlay_visible: state.overlay_visible(),
             cache_hit_rate: state.cache_hit_rate(),
         },
@@ -503,6 +506,7 @@ fn render_prepared_mode(
             zoom_factor: state.zoom_factor(),
             pan_x: state.pan_x(),
             pan_y: state.pan_y(),
+            rgba_frame: prepared.rgba_frame,
             overlay_visible: state.overlay_visible(),
             cache_hit_rate: state.cache_hit_rate(),
         },

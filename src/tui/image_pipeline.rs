@@ -6,7 +6,7 @@ use std::{
 };
 
 use super::{
-    render::image as render_image,
+    render::image::{self as render_image, RgbaFrame},
     state::{NavDirection, ViewerState},
 };
 
@@ -16,6 +16,7 @@ pub(super) struct PreparedImagePayload {
     pub(super) image_dimensions: (u32, u32),
     pub(super) payload_hash: u64,
     pub(super) encoded_payload: Arc<str>,
+    pub(super) rgba_frame: Option<RgbaFrame>,
 }
 
 /// ワーカースレッドで画像描画に必要なデータをまとめて準備する
@@ -32,12 +33,14 @@ pub(super) fn prepare_image_payload(
         render_image::hash_image_payload(image_data.as_ref(), diff_mode)
     };
     let encoded_payload = Arc::<str>::from(general_purpose::STANDARD.encode(image_data.as_ref()));
+    let rgba_frame = render_image::decode_rgba_payload(image_data.as_ref());
 
     Ok(PreparedImagePayload {
         image_data,
         image_dimensions,
         payload_hash,
         encoded_payload,
+        rgba_frame,
     })
 }
 
@@ -97,17 +100,28 @@ pub(super) fn is_always_upload_mode(diff_mode: crate::model::config::ImageDiffMo
 
 /// 画像データをBase64エンコードして返す関数。キャッシュがあればキャッシュを優先する。
 pub(super) fn load_encoded_payload(
+    image_data: &[u8],
+) -> Arc<str> {
+    Arc::<str>::from(general_purpose::STANDARD.encode(image_data))
+}
+
+/// RGBAフレームを取得する関数。キャッシュがあればキャッシュを優先する。
+pub(super) fn load_rgba_frame(
     index: usize,
     image_data: &[u8],
     state: &mut ViewerState,
-) -> Arc<str> {
-    if state.image_cache_mut().enabled()
-        && let Some(encoded) = state.image_cache_mut().get_encoded(index)
+) -> Option<RgbaFrame> {
+    if state.image_cache().enabled()
+        && let Some(cached) = state.image_cache_mut().get_rgba(index)
     {
-        return encoded;
+        return Some(cached);
     }
 
-    Arc::<str>::from(general_purpose::STANDARD.encode(image_data))
+    let decoded = render_image::decode_rgba_payload(image_data)?;
+    if state.image_cache().enabled() {
+        state.image_cache_mut().insert_rgba(index, decoded.clone());
+    }
+    Some(decoded)
 }
 
 /// 隣接画像を先読みする関数
