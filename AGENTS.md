@@ -1,7 +1,7 @@
 # AGENTS Instructions
 
-最終更新: 2026-04-01
-**v1.0.0 ステータス**: ✅ 完成・高優先度リファクタリング完了
+最終更新: 2026-04-06
+**v1.0.1 準備ステータス**: 🚧 高速化最優先ロードマップ実行中
 
 ## Project Goal
 - Kitty Graphics Protocol を使った高速 TUI 画像ビューアーを実装する。
@@ -21,17 +21,19 @@ src/
   model/         - 設定ロードと型定義
   core/          - 画像ファイル収集などコア処理
   tui/
-    ├─ state.rs         - ViewerState（God Object分割済み）
-    ├─ input.rs         - キー入力処理（重複削減完了）
-    ├─ render.rs        - 描画オーケストレーション
-    ├─ runtime.rs       - LRU画像キャッシュ管理
-    ├─ debounce.rs      - プレビュー更新デバウンス
+    ├─ state.rs          - ViewerState（責務分割済み）
+    ├─ input.rs          - キー入力エントリ
+    ├─ input/            - 移動/ズーム/パン/ソート/オープン処理
+    ├─ render.rs         - 描画オーケストレーション
+    ├─ runtime.rs        - LRU画像キャッシュ管理
+    ├─ debounce.rs       - プレビュー更新デバウンス
     ├─ image_pipeline.rs - 画像準備パイプライン
+    ├─ viewer/           - 描画ワーカー連携
     └─ render/
-         ├─ image.rs        - 画像描画制御（旧実装に復帰）
-         ├─ filetree.rs     - サイドバーツリー管理
-         ├─ header.rs, statusbar.rs - ヘッダー/ステータス描画
-         └─ image/          - 差分検出・レイアウト等
+         ├─ image.rs         - 画像描画制御
+         ├─ filetree.rs      - サイドバーツリー管理
+         ├─ header.rs, statusbar.rs, overlay.rs - 補助UI描画
+         └─ image/           - 差分検出・レイアウト・プロトコル・転送
 ```
 
 ## Rendering Rules
@@ -45,7 +47,14 @@ src/
 - 変更は最小単位で行い、無関係な設計変更を避ける。
 - 設定キーは実装に合わせる（例: `display.sidebar_size`）。
 - 実装後は `cargo check` を最低限実行する。
-- **性能劣化の回避**: 10ms以内の変更のみ許可。3倍以上の性能低下は即座にロールバック。
+- **性能劣化の回避**: 変更前ベースラインを取得し、3回測定の中央値で評価する。2倍以上の性能低下は即時ロールバック。
+- **遅延基準**: 描画時間が16ms〜24msを安定して超える場合は「極めて遅い」と判定して優先是正する。
+
+## Current Priority (v1.0.1)
+- A0 計測基盤固定: 描画時間・cache hit率・dirty tile数を定義し、表示フォーマットを統一する。
+- A1 差分/転送最適化: terminal pixel情報、u32チャンク比較、セル倍数タイル整列、転送前リサイズを優先実装する。
+- A2 非同期化: decode→resize→encode を `smol` ベースで非同期化し、RGBAキャッシュを統合する。
+- A3 端末分岐: Wezterm/bcon/Kitty の経路分岐と ACK (`a=q`) 背圧制御を段階導入する。
 
 ## Environment Requirements
 ### Windows 11 Pro
@@ -80,6 +89,12 @@ src/
   - 画像表示に16ms~24smを超える場合、**極めて動作が遅い**判定とする
 - 状態: old_image.rs と同等の旧実装に完全復帰
 - 教訓: 関数分割は読みやすさと性能のトレードオフ
+
+## Backlog Notes (From README/今後のプロジェクト.md)
+- ターミナルの pixel size 取得を描画入力に組み込み、セル/ピクセル換算を一元化する。
+- 差分転送は dirty_ratio による2段階フォールバックを前提にする。
+- 任意項目: `rayon` による並列差分判定、`memmap2` による I/O 最適化は A1/A2 の効果検証後に判断する。
+- Simple Video Player 連携を見据え、FrameSource/FrameProcessor/FramePresenter 境界を維持する。
 
 ## References
 - Project overview: @./README.md

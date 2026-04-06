@@ -5,8 +5,8 @@ description: Skills and practical guidance for Garou, a Kitty Graphics Protocol 
 
 # SKILL
 
-最終更新: 2026-04-01
-**実装状態**: v1.0.0 完成・高優先度リファクタリング完了（input.rs, state.rs）
+最終更新: 2026-04-06
+**実装状態**: v1.0.1 準備中（高速化最優先フェーズ）
 
 ## Core Skills
 
@@ -31,12 +31,21 @@ description: Skills and practical guidance for Garou, a Kitty Graphics Protocol 
 ### 4) 画像・ファイル取り扱い
 - 対応拡張子: png/jpg/jpeg/gif/webp/bmp。引数未指定時はカレントディレクトリから取得しソート。
 - 設定は現状 `setting.toml`（プロジェクト直下）を読み込む。
-- 設定キーは実装に従う（`display.sidebar_size`, `display.	preview_debounce`, `cache.lru_size`, `cache.max_bytes`, `cache.prefetch_size`, `image.diff_mode`, `image.extensions`）。
+- 設定キーは実装に従う（`display.sidebar_size`, `display.preview_debounce`, `cache.lru_size`, `cache.max_bytes`, `cache.prefetch_size`, `image.diff_mode`, `image.extensions`）。
 
 ### 5) パフォーマンスと安定性
 - 全消去は必要最小限（`full_refresh` 時のみ全面クリア）。通常は差分方針で更新する。
-- デバウンス付きプレビュー更新（`	preview_debounce`）と LRU キャッシュ、近傍先読み（`prefetch_size`）で連続移動の待ち時間を抑える。
+- デバウンス付きプレビュー更新（`preview_debounce`）と LRU キャッシュ、近傍先読み（`prefetch_size`）で連続移動の待ち時間を抑える。
 - 差分モード: `All`（常時再送）/`Full`（全バイト比較）/`Half`（間引き比較）を用途に応じて切替える。
+- `dirty_ratio` による 2段階フォールバック（差分タイル上書き / フルフレーム送信）を前提に設計する。
+- 描画時間が 16ms〜24ms を安定して超える場合は遅延異常として優先是正する。
+
+### 6) 高速化ロードマップ実装スキル（v1.0.1）
+- 大画像は転送前に `image` クレートでリサイズし、payload サイズを先に削減する。
+- 差分判定ホットループは u32 チャンク比較を優先し、必要に応じて `skip_step` で比較密度を調整する。
+- decode→resize→encode を `smol` ベースの非同期経路へ切り出し、UI スレッド停止を回避する。
+- ACK (`a=q`) を用いた背圧制御を導入し、フレーム送出の詰まりを抑える。
+- ターミナル特性に応じて転送方式を分岐する（Wezterm/bcon: `a=T`、kitty: `a=f` 検証）。
 
 ## Implementation Checklist
 - 入力: raw mode + alternate screen のセットアップ/クリーンアップを対で呼ぶ。
@@ -48,6 +57,7 @@ description: Skills and practical guidance for Garou, a Kitty Graphics Protocol 
 ## Quality Checklist
 - `cargo fmt`
 - `cargo check`
+- 変更前後で3回測定し中央値を比較（2倍以上の性能低下はロールバック）
 - 手動: `q`/`Esc`/`h`/`l`/←/→/`j`/`k`/↑/↓/`Enter`/`o`/`r`/`R`/`Alt+S`/`b` の入力確認
 - Kitty 対応ターミナルでの表示確認（幅フィットと縦横比維持を目視）
 - 日本語や長いファイル名でヘッダー/サイドバーが折り返さず、画像領域に侵食しないことを確認

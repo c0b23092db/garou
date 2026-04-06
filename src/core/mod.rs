@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result,anyhow};
 use std::cmp::Ordering;
 use std::env::current_dir;
 use std::fs;
@@ -22,7 +22,7 @@ pub fn resolve_image_start(
             // カレントディレクトリ //
             let dir = current_dir().unwrap_or_else(|_| PathBuf::from("."));
             if !has_image_file_in_dir(&dir, extensions)? {
-                return Err(anyhow::anyhow!(
+                return Err(anyhow!(
                     "カレントディレクトリ直下に画像ファイルがありません: {}",
                     dir.display()
                 ));
@@ -34,7 +34,7 @@ pub fn resolve_image_start(
             if p.is_dir() {
                 // ディレクトリ指定 //
                 if !has_image_file_in_dir(&p, extensions)? {
-                    return Err(anyhow::anyhow!(
+                    return Err(anyhow!(
                         "指定ディレクトリ直下に画像ファイルがありません: {}",
                         p.display()
                     ));
@@ -45,7 +45,7 @@ pub fn resolve_image_start(
                 // ファイル指定 //
                 let parent = p
                     .parent()
-                    .ok_or_else(|| anyhow::anyhow!("No parent directory for path: {:?}", p))?;
+                    .ok_or_else(|| anyhow!("No parent directory for path: {:?}", p))?;
                 let files = get_image_files_from_dir(parent, extensions)?;
                 let start_index = files.iter().position(|f| f == &p).unwrap_or(0);
                 Ok((files, start_index))

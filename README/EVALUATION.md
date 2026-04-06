@@ -589,7 +589,7 @@ src/tui/runtime.rs               : ~100行  (最小実装)
 ```toml
 [display]
 sidebar_size = 20           # 増加で縦テキスト表示を減少
-	preview_debounce = 200   # 増加で遅延但し流暢性向上
+preview_debounce = 200   # 増加で遅延但し流暢性向上
 
 [cache]
 lru_size = 10              # 増加でメモリ使用 ↑

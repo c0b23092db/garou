@@ -7,13 +7,14 @@ siv.exe
 English - [README.md](../README.md)
 
 ## ⭐ 特徴
-- **差分の高速表示**: 連続的な画像の差分表示を最適化
+- **差分の高速表示**: 連続的な画像の表示を最適化
 - **LRUキャッシング**: メモリ効率的な画像管理
 - **デバウンス制御**: カーソル移動時のプレビュー更新を最適化
 - **自然ソート**: ファイル名を1,2,3,10,11,12の順序で表示
 
 ## 💻 実行環境
 ### ターミナルエミュレータ
+- Kitty Graphics Protocolが動作する
 #### 検証済
 - [x] Wezterm Nightly
 #### 動作不能
@@ -45,7 +46,7 @@ cargo install --git https://github.com/c0b23092db/garou
 ## 📖 コマンド
 ```
 > siv --help
-TUI: Simple Image Viewer for Kitty Graphics Protocol
+TUI: Simple Image Protocol Viewer for Kitty Graphics Protocol
 
 Usage: siv.exe [PATH]
 
@@ -82,14 +83,15 @@ Options:
 - **`H / ←`**: フォルダを折りたたむ
 - **`L / →`**: フォルダを展開
 - **`Enter`**: フォルダのトグル
-- **左クリック**: ファイルを選択
-- **ホイール**: カーソルを移動
+- **`左クリック`**: ファイルを選択
+- **`ホイール`**: カーソルを移動
 
-### バグがある操作
+### 実験/試験動作（Preview）
 - （preview）`0`: 画像のフィット
 - （preview）`+`: 画像の拡大
 - （preview）`-`: 画像の縮小
 - （preview）`Shift + J`, `Shift + K`, `Shift + H`, `Shift + L`: 画像の移動
+- （preview）`ホイール`: 画像の拡大/縮小
 
 ## ⚙️ 設定ファイル
 `~/.config/garou/config.toml`を読み込みます。
@@ -101,7 +103,7 @@ diff_mode = "Full"
 transport_mode = "auto"
 filter_type = "Nearest"
 image_width = 5120
-image_height = 5000
+image_height = 2880
 dirty_ratio = 0.1
 tile_grid = 32
 skip_step = 1
@@ -125,32 +127,31 @@ prefetch_size = 1     # 先読みキャッシュ数
 max_bytes = 268435456 # キャッシュ総容量上限（バイト）
 ```
 
-### image
+### **image**
 
 #### 画像表示プロセス（diff_mode）
 - `All`: 差分判定を行わず、毎回画像をリフレッシュする
 - `Full`: RGB（FFFFFF）のすべての番地を判定して変更がある場合のみ更新する
 - `Half`: RGB（FFFFFF）の0番地、2番地、4番地のみ判定する
 
-#### transport_mode（Kitty Graphics Protocolの転送モード）
+#### Kitty Graphics Protocolの転送モード（transport_mode）
 - `auto`
-- `direct`, `d`
-- `file`, `f`
-- `temp_file`, `t`
-- `shared_memory`, `s`
+- `direct` (`d`)
+- `file` (`f`)
+- `temp_file` (`t`)
+- `shared_memory` (`s`)
 
 ##### autoの挙動
 - Linux: `shared_memory` -> `direct`
 - Windows: `direct`
 
-#### image_width, image_width（`file`などの最大サイズ）
-transport_modeが`file`,`temp_file`,`shared_memory`の時、描画する画像の最大サイズ。
-これを超える画像を読み込んだ場合、`direct`としてフォールバックします。
-image_width = 5120
-image_height = 2880
+#### `file`などによる描画時の最大サイズ（image_width, image_width）
+transport_modeが`file`,`temp_file`,`shared_memory`の時、描画する画像の最大サイズです。これを超える画像を読み込んだ場合、`direct`としてフォールバックします。
+デフォルトで5Kの画像まで読み込めます。
 
-#### filter_type（image::imageops::FilterType）
+#### 画像のデコード処理（filter_type）
 transport_modeが`direct`の時に行うデコード処理です。
+詳しくはimageクレートの[image::imageops::FilterType](https://docs.rs/image/latest/image/imageops/enum.FilterType.html)を参照してください。
 - `Nearest`
 - `Triangle`
 - `CatmullRom`
@@ -166,9 +167,9 @@ transport_modeが`direct`の時に行うデコード処理です。
 #### 画素間引き(skip_step)
 指定したピクセル間隔で走査します。
 
-### display
+### **display**
 
-#### 起動時展開
+#### 起動時展開（sidebar, header, statusbar）
 起動時に開閉状態にする設定です。
 - sidebar
 - header
@@ -204,12 +205,12 @@ transport_modeが`direct`の時に行うデコード処理です。
 #### アイドル状態の先読み間隔（prefetch_interval）
 アイドル状態で隣の画像をプリフェッチする最小実行間隔をミリ秒で指定する。
 
-### cache
+### **cache**
 
-#### max_bytes
+#### 画像キャッシュの容量（max_bytes）
 `256 * 1024 * 1024`の**268435456**がデフォルト値となっています。
 
-## おすすめ設定
+## 🔭 おすすめ設定
 ### Windows(Local)
 ```toml
 [image]
@@ -217,8 +218,8 @@ diff_mode = "All"
 transport_mode = "file"
 
 [display]
-sidebar = true
 header = true
+sidebar = true
 statusbar = false
 sidebar_size = 20
 preview_debounce = 50
@@ -228,16 +229,10 @@ lru_size = 5
 prefetch_size = 1
 ```
 
-## 認知しているバグ
-- 大きい画像が開けない
-- 画像のパンがうまく動作しない
-
-## TODO
+## 📝 TODO
 - **差分表示の高速表示**
 - **サイズが大きい画像の高速表示**
 
-- パフォーマンスメータ／統計表示（「直近の描画にかかった時間」「キャッシュヒット率」「diff 判定が走ったタイル数」など）
-  - キャッシュヒット率・描画時間などの計測基盤は既に存在。statusbar/headerに追加表示するだけ。プロジェクトの性能重視ポリシーに揃う。
 - キーバインドのユーザー定義
   - 現在は hardcoded。設定ファイル駆動に変更し、input.rs を設定参照に修正。競合検出処理は追加工数。リファクタリング投資。
 - 簡易ファイル操作（削除・リネーム・別フォルダへ移動）
@@ -245,17 +240,17 @@ prefetch_size = 1
 - ズーム・パン・フィット
   - Kitty Graphics Protocol の z パラメータで実現可能だが、TUI上のズーム率表示/パン入力方法の設計が必要。プロトコル仕様確認後に判断。
 
-## 着想
+## 💡 着想
 - Kitty Graphic Protocol: ターミナルでの画像表示
 - yazi: 高速な画像表示
 - Neovim: キーボード操作
 
-## 貢献
+## 🤝 貢献
 バグ報告、機能提案、プルリクエストを歓迎します。
 agentsディレクトリに今後の展望などが書かれています。
 
-## LICENSE
+## 📜 LICENSE
 [MIT License](../LICENSE) / <http://opensource.org/licenses/MIT>
 
-## 開発者
+## 👤 開発者
 - ikata

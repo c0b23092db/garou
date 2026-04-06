@@ -352,6 +352,7 @@ impl ViewerState {
     // ======================
     // Performance Accessors
     // ======================
+    /// 描画パフォーマンスを記録する関数
     pub(super) fn record_render_metrics(
         &mut self,
         duration: Duration,

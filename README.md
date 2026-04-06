@@ -7,13 +7,14 @@ siv.exe
 日本語 - [README-ja.md](README/README-ja.md)
 
 ## ⭐ Features
-- **Fast Differential Display**: Optimized differential display for consecutive images
+- **Fast Differential Display**: Optimized rendering for consecutive images
 - **LRU Caching**: Memory-efficient image management
 - **Debounce Control**: Optimized preview updates on cursor movement
 - **Natural Sort**: Display file names in order 1,2,3,10,11,12
 
 ## 💻 System Requirements
 ### Terminal Emulator
+- Must support **Kitty Graphics Protocol**
 #### Verified
 - [x] Wezterm Nightly
 #### Not Working
@@ -45,7 +46,7 @@ cargo install --git https://github.com/c0b23092db/garou
 ## 📖 Commands
 ```
 > siv --help
-TUI: Simple Image Viewer for Kitty Graphics Protocol
+TUI: Simple Image Protocol Viewer for Kitty Graphics Protocol
 
 Usage: siv.exe [PATH]
 
@@ -82,8 +83,15 @@ Options:
 - **`H / ←`**: Collapse folder
 - **`L / →`**: Expand folder
 - **`Enter`**: Toggle folder
-- **Left Click**: Select file
-- **Wheel**: Move cursor
+- **`Left Click`**: Select file
+- **`Wheel`**: Move cursor
+
+### Experimental / Test Controls (Preview)
+- (preview) `0`: Fit image to view
+- (preview) `+`: Zoom in
+- (preview) `-`: Zoom out
+- (preview) `Shift + J`, `Shift + K`, `Shift + H`, `Shift + L`: Pan image
+- (preview) `Wheel`: Image Zoom in / out
 
 ## ⚙️ Configuration File
 Reads from `~/.config/garou/config.toml`.
@@ -93,6 +101,9 @@ Reads from `~/.config/garou/config.toml`.
 extensions = ["png", "jpg", "jpeg", "gif", "webp", "bmp"]
 diff_mode = "Full"
 transport_mode = "auto"
+filter_type = "Nearest"
+image_width = 5120
+image_height = 2880
 dirty_ratio = 0.1
 tile_grid = 32
 skip_step = 1
@@ -116,7 +127,7 @@ prefetch_size = 1     # Prefetch cache size
 max_bytes = 268435456 # Cache total size limit (bytes)
 ```
 
-### image
+### **image**
 
 #### Image display process (diff_mode)
 - `All`: No differential check, refresh image every time
@@ -125,14 +136,27 @@ max_bytes = 268435456 # Cache total size limit (bytes)
 
 #### transport_mode (Kitty Graphics Protocol transfer mode)
 - `auto`
-- `direct`, `d`
-- `file`, `f`
-- `temp_file`, `t`
-- `shared_memory`, `s`
+- `direct` (`d`)
+- `file` (`f`)
+- `temp_file` (`t`)
+- `shared_memory` (`s`)
 
 ##### auto behavior
 - Linux: `shared_memory` -> `direct`
 - Windows: `direct`
+
+#### Maximum Image Size (image_width, image_height)
+When using file, temp_file, or shared_memory, images larger than this size will fall back to direct mode.
+Default allows loading images up to 5K resolution.
+
+#### Decode Filter (filter_type)
+Used when transport_mode = "direct"
+See: [image::imageops::FilterType](https://docs.rs/image/latest/image/imageops/enum.FilterType.html)
+- `Nearest`
+- `Triangle`
+- `CatmullRom`
+- `Gaussian`
+- `Lanczos3`
 
 #### Differential determination threshold (dirty_ratio)
 Threshold for determining if differential. Can be set from 0.0 to 1.0.
@@ -143,7 +167,7 @@ Pixel size of one side of tiles used for change detection.
 #### Pixel skipping (skip_step)
 Scan at specified pixel intervals.
 
-### display
+### **display**
 
 #### Startup expansion
 Settings for initial open/closed state.
@@ -181,12 +205,12 @@ Specifies the maximum wait time in milliseconds before checking for keyboard or 
 #### Idle prefetch interval (prefetch_interval)
 Specifies the minimum interval in milliseconds for prefetching adjacent images while the application is idle.
 
-### cache
+### **cache**
 
 #### max_bytes
 Default value is **268435456** (`256 * 1024 * 1024`).
 
-## Recommended Settings
+## 🔭 Recommended Settings
 ### Windows (Local)
 ```toml
 [image]
@@ -205,19 +229,23 @@ lru_size = 5
 prefetch_size = 1
 ```
 
-## TODO
+## 📝 TODO
 - Fast differential display
 - Fast display for large size images
 
 Please refer to the Japanese version of README.md for other details.
 
-## Contributing
+## 💡 Inspiration
+- Kitty Graphics Protocol (terminal image rendering)
+- yazi (high-speed image preview)
+- Neovim (keyboard-driven operation)
+
+## 🤝 Contributing
 Bug reports, feature suggestions, and pull requests are welcome.
 The agents directory includes details such as future prospects and plans.
 
-## LICENSE
+## 📜 LICENSE
 [MIT License](LICENSE) / <http://opensource.org/licenses/MIT>
 
-## Developer
+## 👤 Developer
 - ikata
-
