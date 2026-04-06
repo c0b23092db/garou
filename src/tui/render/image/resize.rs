@@ -1,5 +1,5 @@
 use crossterm::terminal::size;
-use image::{RgbaImage, imageops::FilterType};
+use image::{DynamicImage, GenericImageView, RgbaImage, imageops::FilterType};
 
 const CELL_PIXEL_WIDTH: u32 = 8;
 const CELL_PIXEL_HEIGHT: u32 = 16;
@@ -26,6 +26,24 @@ pub(in crate::tui) fn terminal_pixel_limit() -> (u32, u32) {
         .max(1);
 
     (width_px, height_px)
+}
+
+/// デコード済みのネイティブ画像をターミナル表示可能な範囲内にリサイズする
+pub(in crate::tui) fn resize_to_terminal_limit(image: DynamicImage) -> DynamicImage {
+    let (max_w, max_h) = terminal_pixel_limit();
+    let (w, h) = image.dimensions();
+
+    if w <= max_w && h <= max_h {
+        return image;
+    }
+
+    let scale_w = max_w as f32 / w as f32;
+    let scale_h = max_h as f32 / h as f32;
+    let scale = scale_w.min(scale_h).max(0.01);
+    let target_w = ((w as f32 * scale).round() as u32).max(1);
+    let target_h = ((h as f32 * scale).round() as u32).max(1);
+
+    image.resize_exact(target_w, target_h, FilterType::Triangle)
 }
 
 /// RGBA画像がターミナルの物理ピクセル制限を超える場合にリサイズする関数

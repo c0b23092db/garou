@@ -11,10 +11,10 @@ output_dir.mkdir(exist_ok=True)
 count = 1
 
 # 画像サイズの定義
-sizes = [(6000,6000),(7000,7000)]
+sizes = [(5120,2880)]
 
 # 指定したpxごとにランダムに色が変わる画像を作成
-block_size = 100
+block_size = 20
 print("=== {}x{}pxごとにランダム色の画像を作成中 ===".format(block_size, block_size))
 
 for count in range(count):
