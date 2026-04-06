@@ -28,7 +28,7 @@ use self::{
         send_delete,
     },
     overlay::{build_overlay_info, render_overlay},
-    statusbar::render_statusbar,
+    statusbar::{StatusbarContent, render_statusbar},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -86,6 +86,8 @@ pub struct RenderOptions {
     pub diff_mode: ImageDiffMode,
     /// 画像の幅と高さ
     pub image_dimensions: (u32, u32),
+    /// 元画像の幅と高さ（前処理前）
+    pub source_dimensions: (u32, u32),
     /// 画像データのハッシュ値（描画の差分検出に使用）
     pub payload_hash: u64,
     /// 画像データの所有権を持つArc（描画関数に渡す際のクローンは軽量）
@@ -112,8 +114,6 @@ pub struct RenderOptions {
     pub status_message: Option<String>,
     /// 描画外で発生した画像処理時間（デコード/リサイズ/エンコード等）
     pub processing_duration: Duration,
-    /// 画像キャッシュヒット率 (0.0-1.0)。キャッシュ無効時は None。
-    pub cache_hit_rate: Option<f32>,
 }
 
 /// 画面全体を描画する関数
@@ -123,6 +123,16 @@ pub fn render_frame(
     options: RenderOptions,
     image_render_state: &mut ImageRenderState,
 ) -> Result<FrameRenderMetrics> {
+    const CELL_PIXEL_WIDTH: u32 = 8;
+    const CELL_PIXEL_HEIGHT: u32 = 16;
+
+    let placement_to_pixel_size = |placement: (u16, u16, u32, u32)| -> (u32, u32) {
+        (
+            placement.2.saturating_mul(CELL_PIXEL_WIDTH),
+            placement.3.saturating_mul(CELL_PIXEL_HEIGHT),
+        )
+    };
+
     let term_width = input.term_width as u32;
     let term_height = input.term_height as u32;
 
@@ -203,7 +213,8 @@ pub fn render_frame(
     if let Some(message) = options.status_message.as_deref() {
         if is_image_size_limit_error {
             render_image_message_top_left(stdout, image_start_x, available_width, message)?;
-        } else {
+        } else if !options.skip_image {
+            // 待機メッセージで画像上に帯が残らないよう、skip_image中は中央帯を描かない。
             render_image_message_center(
                 stdout,
                 image_start_x,
@@ -211,6 +222,8 @@ pub fn render_frame(
                 available_height,
                 message,
             )?;
+        } else {
+            queue!(stdout, MoveTo(image_start_x, 1), Clear(ClearType::CurrentLine))?;
         }
     }
 
@@ -226,20 +239,17 @@ pub fn render_frame(
                 stdout,
                 term_width,
                 term_height,
-                Duration::ZERO,
-                options.image_dimensions,
-                options.cache_hit_rate,
-                render_metrics.dirty_tiles,
-                None,
+                StatusbarContent {
+                    elapsed: Duration::ZERO,
+                    source_dimensions: options.source_dimensions,
+                    rendered_dimensions: placement_to_pixel_size(render_metrics.placement),
+                    status_message: None,
+                },
                 options.statusbar_bg_color,
                 options.statusbar_fg_color,
             )?;
         } else if options.skip_image && options.status_message.is_none() {
-            queue!(
-                stdout,
-                MoveTo(0, term_height.saturating_sub(1) as u16),
-                Clear(ClearType::CurrentLine)
-            )?;
+            // 待機中にステータスバーを消さず、点滅を防ぐ。
         } else {
             let elapsed = render_metrics
                 .render_duration
@@ -248,11 +258,12 @@ pub fn render_frame(
                 stdout,
                 term_width,
                 term_height,
-                elapsed,
-                options.image_dimensions,
-                options.cache_hit_rate,
-                render_metrics.dirty_tiles,
-                options.status_message.as_deref(),
+                StatusbarContent {
+                    elapsed,
+                    source_dimensions: options.source_dimensions,
+                    rendered_dimensions: placement_to_pixel_size(render_metrics.placement),
+                    status_message: options.status_message.as_deref(),
+                },
                 options.statusbar_bg_color,
                 options.statusbar_fg_color,
             )?;

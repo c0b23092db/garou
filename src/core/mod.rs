@@ -12,6 +12,7 @@ pub enum SortField {
     Size,
 }
 
+/// 画像ファイルのリストを取得し、開始位置を決定する関数
 pub fn resolve_image_start(
     path: Option<PathBuf>,
     extensions: &[String],
@@ -141,6 +142,7 @@ pub fn sort_image_files(image_files: &mut [PathBuf], sort_field: SortField, desc
     });
 }
 
+/// ファイルの最終更新日時を比較する関数
 fn compare_modified_time(a: &Path, b: &Path) -> Ordering {
     let a_time = fs::metadata(a)
         .ok()
@@ -157,6 +159,7 @@ fn compare_modified_time(a: &Path, b: &Path) -> Ordering {
     a_time.cmp(&b_time)
 }
 
+/// ファイルサイズを比較する関数
 fn compare_file_size(a: &Path, b: &Path) -> Ordering {
     let a_size = fs::metadata(a).map(|m| m.len()).unwrap_or(0);
     let b_size = fs::metadata(b).map(|m| m.len()).unwrap_or(0);

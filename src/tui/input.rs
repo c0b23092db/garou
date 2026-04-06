@@ -16,7 +16,7 @@ use clear::{clear_and_full_refresh, clear_and_image_refresh};
 use input_move::{apply_sidebar_cursor_change, schedule_redraw, sync_sidebar_to_image};
 use open::open_current_image;
 use pan::pan_image;
-use sort::apply_sort;
+use sort::{SortContext, apply_sort};
 use zoom::{fit_image, zoom_in, zoom_out};
 
 fn is_mouse_on_image(mouse: MouseEvent, state: &ViewerState) -> bool {
@@ -31,17 +31,29 @@ fn is_mouse_on_image(mouse: MouseEvent, state: &ViewerState) -> bool {
 }
 
 /// キー入力を処理し、必要に応じて描画モードを更新する
-pub fn process_key(
-    key: KeyEvent,
-    image_files: &mut Vec<PathBuf>,
-    current_index: &mut usize,
-    redraw_mode: &mut RedrawMode,
-    state: &mut ViewerState,
-    debounce_duration: Duration,
-    term_height: u16,
-    sort_field: &mut SortField,
-    sort_descending: &mut bool,
-) -> bool {
+pub struct KeyProcessContext<'a> {
+    pub image_files: &'a mut Vec<PathBuf>,
+    pub current_index: &'a mut usize,
+    pub redraw_mode: &'a mut RedrawMode,
+    pub state: &'a mut ViewerState,
+    pub debounce_duration: Duration,
+    pub term_height: u16,
+    pub sort_field: &'a mut SortField,
+    pub sort_descending: &'a mut bool,
+}
+
+pub fn process_key(key: KeyEvent, ctx: KeyProcessContext<'_>) -> bool {
+    let KeyProcessContext {
+        image_files,
+        current_index,
+        redraw_mode,
+        state,
+        debounce_duration,
+        term_height,
+        sort_field,
+        sort_descending,
+    } = ctx;
+
     let image_count = image_files.len();
     if image_count == 0 {
         return false;
@@ -123,12 +135,7 @@ pub fn process_key(
                         debounce_duration,
                     );
                 } else {
-                    sync_sidebar_to_image(
-                        *current_index,
-                        state,
-                        image_files,
-                        NavDirection::Backward,
-                    );
+                    sync_sidebar_to_image(*current_index, state, image_files, NavDirection::Backward);
                     schedule_redraw(redraw_mode, state, debounce_duration);
                 }
             }
@@ -153,12 +160,7 @@ pub fn process_key(
                         debounce_duration,
                     );
                 } else {
-                    sync_sidebar_to_image(
-                        *current_index,
-                        state,
-                        image_files,
-                        NavDirection::Forward,
-                    );
+                    sync_sidebar_to_image(*current_index, state, image_files, NavDirection::Forward);
                     schedule_redraw(redraw_mode, state, debounce_duration);
                 }
             }
@@ -183,12 +185,7 @@ pub fn process_key(
                         debounce_duration,
                     );
                 } else {
-                    sync_sidebar_to_image(
-                        *current_index,
-                        state,
-                        image_files,
-                        NavDirection::Backward,
-                    );
+                    sync_sidebar_to_image(*current_index, state, image_files, NavDirection::Backward);
                     schedule_redraw(redraw_mode, state, debounce_duration);
                 }
             }
@@ -213,12 +210,7 @@ pub fn process_key(
                         debounce_duration,
                     );
                 } else {
-                    sync_sidebar_to_image(
-                        *current_index,
-                        state,
-                        image_files,
-                        NavDirection::Forward,
-                    );
+                    sync_sidebar_to_image(*current_index, state, image_files, NavDirection::Forward);
                     schedule_redraw(redraw_mode, state, debounce_duration);
                 }
             }
@@ -303,85 +295,97 @@ pub fn process_key(
             false
         }
         /* ソート */
-        // .: ソート基準の切り替え（降順）
+        // m: 修正日時
         KeyCode::Char('m') => {
             apply_sort(
-                image_files,
-                current_index,
-                redraw_mode,
-                state,
-                sort_field,
-                sort_descending,
+                SortContext {
+                    image_files,
+                    current_index,
+                    redraw_mode,
+                    state,
+                    sort_field,
+                    sort_descending,
+                },
                 SortField::ModifiedTime,
                 false,
             );
             false
         }
-        // ,: ソート基準の切り替え（昇順）
+        // M: 修正日時（降順）
         KeyCode::Char('M') => {
             apply_sort(
-                image_files,
-                current_index,
-                redraw_mode,
-                state,
-                sort_field,
-                sort_descending,
+                SortContext {
+                    image_files,
+                    current_index,
+                    redraw_mode,
+                    state,
+                    sort_field,
+                    sort_descending,
+                },
                 SortField::ModifiedTime,
                 true,
             );
             false
         }
-        // n: ソート基準の切り替え（降順）
+        // n: 自然順
         KeyCode::Char('n') => {
             apply_sort(
-                image_files,
-                current_index,
-                redraw_mode,
-                state,
-                sort_field,
-                sort_descending,
+                SortContext {
+                    image_files,
+                    current_index,
+                    redraw_mode,
+                    state,
+                    sort_field,
+                    sort_descending,
+                },
                 SortField::Natural,
                 false,
             );
             false
         }
-        // N: ソート基準の切り替え（昇順）
+        // N: 自然順（降順）
         KeyCode::Char('N') => {
             apply_sort(
-                image_files,
-                current_index,
-                redraw_mode,
-                state,
-                sort_field,
-                sort_descending,
+                SortContext {
+                    image_files,
+                    current_index,
+                    redraw_mode,
+                    state,
+                    sort_field,
+                    sort_descending,
+                },
                 SortField::Natural,
                 true,
             );
             false
         }
-        // s: ソート基準の切り替え（降順）
+        // s: サイズ
         KeyCode::Char('s') => {
             apply_sort(
-                image_files,
-                current_index,
-                redraw_mode,
-                state,
-                sort_field,
-                sort_descending,
+                SortContext {
+                    image_files,
+                    current_index,
+                    redraw_mode,
+                    state,
+                    sort_field,
+                    sort_descending,
+                },
                 SortField::Size,
                 false,
             );
             false
         }
-        // S: ソート基準の切り替え（昇順）
+        // S: サイズ（降順）
         KeyCode::Char('S') => {
             apply_sort(
-                image_files,
-                current_index,
-                redraw_mode,
-                state,
-                sort_field,
-                sort_descending,
+                SortContext {
+                    image_files,
+                    current_index,
+                    redraw_mode,
+                    state,
+                    sort_field,
+                    sort_descending,
+                },
                 SortField::Size,
                 true,
             );

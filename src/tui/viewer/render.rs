@@ -72,6 +72,7 @@ pub(super) fn render_current_mode(
             transport_mode: state.transport_mode(),
             diff_mode: state.image_diff_mode(),
             image_dimensions,
+            source_dimensions: image_dimensions,
             payload_hash,
             image_data,
             encoded_payload,
@@ -85,7 +86,6 @@ pub(super) fn render_current_mode(
             overlay_visible: state.overlay_visible(),
             status_message: None,
             processing_duration,
-            cache_hit_rate: state.cache_hit_rate(),
         },
         &mut state.image_render_state,
     )?;
@@ -156,6 +156,7 @@ pub(super) fn render_prepared_mode(
             transport_mode: state.transport_mode(),
             diff_mode: state.image_diff_mode(),
             image_dimensions: prepared.image_dimensions,
+            source_dimensions: prepared.source_dimensions,
             payload_hash: prepared.payload_hash,
             image_data: prepared.image_data,
             encoded_payload: prepared.encoded_payload,
@@ -169,7 +170,6 @@ pub(super) fn render_prepared_mode(
             overlay_visible: state.overlay_visible(),
             status_message: None,
             processing_duration: prepared.prepare_duration,
-            cache_hit_rate: state.cache_hit_rate(),
         },
         &mut state.image_render_state,
     )?;
@@ -227,6 +227,7 @@ pub(super) fn render_pending_mode(
             transport_mode: state.transport_mode(),
             diff_mode: state.image_diff_mode(),
             image_dimensions: (0, 0),
+            source_dimensions: (0, 0),
             payload_hash: 0,
             image_data: Arc::<[u8]>::from([]),
             encoded_payload: Arc::<str>::from(""),
@@ -240,7 +241,6 @@ pub(super) fn render_pending_mode(
             overlay_visible: state.overlay_visible(),
             status_message: message.map(str::to_owned),
             processing_duration: Duration::ZERO,
-            cache_hit_rate: state.cache_hit_rate(),
         },
         &mut state.image_render_state,
     )?;

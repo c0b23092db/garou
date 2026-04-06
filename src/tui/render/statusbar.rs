@@ -7,16 +7,20 @@ use crossterm::{
 use std::{io, time::Duration};
 use unicode_width::UnicodeWidthStr;
 
+#[derive(Debug, Clone)]
+pub struct StatusbarContent<'a> {
+    pub elapsed: Duration,
+    pub source_dimensions: (u32, u32),
+    pub rendered_dimensions: (u32, u32),
+    pub status_message: Option<&'a str>,
+}
+
 /// 画面下部にステータスバーを描画する関数
 pub fn render_statusbar(
     stdout: &mut io::Stdout,
     term_width: u32,
     term_height: u32,
-    elapsed: Duration,
-    image_dimensions: (u32, u32),
-    cache_hit_rate: Option<f32>,
-    dirty_tiles: Option<usize>,
-    status_message: Option<&str>,
+    content: StatusbarContent<'_>,
     statusbar_bg_color: Color,
     statusbar_fg_color: Color,
 ) -> Result<()> {
@@ -24,20 +28,15 @@ pub fn render_statusbar(
         return Ok(());
     }
 
-    let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
-    let text = if let Some(message) = status_message {
+    let elapsed_ms = content.elapsed.as_secs_f64() * 1000.0;
+    let text = if let Some(message) = content.status_message {
         message.to_string()
     } else {
-        let (img_width, img_height) = image_dimensions;
-        let hit_text = cache_hit_rate
-            .map(|rate| format!("hit:{:.0}%", rate * 100.0))
-            .unwrap_or_else(|| "hit:--".to_string());
-        let dirty_text = dirty_tiles
-            .map(|count| format!("dirty:{}", count))
-            .unwrap_or_else(|| "dirty:--".to_string());
+        let (img_width, img_height) = content.source_dimensions;
+        let (rendered_w, rendered_h) = content.rendered_dimensions;
         format!(
-            "{:.1}ms | {}x{} | {} | {}",
-            elapsed_ms, img_width, img_height, hit_text, dirty_text
+            "{:.1}ms | {}x{} | {}x{}",
+            elapsed_ms, img_width, img_height, rendered_w, rendered_h
         )
     };
 

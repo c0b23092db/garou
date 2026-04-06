@@ -13,6 +13,7 @@ use super::{
     render::image::{self as render_image, RgbaFrame},
     state::{NavDirection, ViewerState},
 };
+use crate::model::config::{ImageFilterType, TransportMode};
 
 /// 画像の最大ピクセル数を定義する定数
 const MAX_RGBA_DIFF_PIXELS: u64 = 32 * 1024 * 1024;
@@ -20,8 +21,6 @@ const CELL_PIXEL_WIDTH: u32 = 8;
 const CELL_PIXEL_HEIGHT: u32 = 16;
 const DPI_SCALE_NUM: u32 = 1;
 const DPI_SCALE_DEN: u32 = 1;
-const RESIZE_TRIGGER_EDGE: u32 = 6000;
-const RESIZE_TRIGGER_PIXELS: u64 = 48 * 1024 * 1024;
 
 fn terminal_pixel_limit() -> (u32, u32) {
     let (cols, rows) = terminal_size().unwrap_or((120, 40));
@@ -40,19 +39,10 @@ fn terminal_pixel_limit() -> (u32, u32) {
 }
 
 fn should_resize_for_terminal(source_dims: (u32, u32), max_w: u32, max_h: u32) -> bool {
-    let exceeds_terminal = source_dims.0 > max_w || source_dims.1 > max_h;
-    if !exceeds_terminal {
-        return false;
-    }
-
-    // 中サイズ画像は terminal 側スケーリングに任せて初回速度と画質を優先。
-    let large_enough = source_dims.0 > RESIZE_TRIGGER_EDGE
-        || source_dims.1 > RESIZE_TRIGGER_EDGE
-        || image_pixel_count(source_dims) > RESIZE_TRIGGER_PIXELS;
-    large_enough
+    source_dims.0 > max_w || source_dims.1 > max_h
 }
 
-fn resize_for_terminal(image: DynamicImage, max_w: u32, max_h: u32) -> DynamicImage {
+fn resize_for_terminal(image: DynamicImage, max_w: u32, max_h: u32, filter: FilterType) -> DynamicImage {
     let (w, h) = image.dimensions();
     if w <= max_w && h <= max_h {
         return image;
@@ -61,7 +51,34 @@ fn resize_for_terminal(image: DynamicImage, max_w: u32, max_h: u32) -> DynamicIm
     let scale = (max_w as f32 / w as f32).min(max_h as f32 / h as f32).max(0.01);
     let target_w = ((w as f32 * scale).round() as u32).max(1);
     let target_h = ((h as f32 * scale).round() as u32).max(1);
-    image.resize_exact(target_w, target_h, FilterType::Triangle)
+    image.resize_exact(target_w, target_h, filter)
+}
+
+fn apply_transport_limit(
+    max_w: u32,
+    max_h: u32,
+    transport_mode: TransportMode,
+    file_width_limit: u32,
+    file_height_limit: u32,
+) -> (u32, u32) {
+    if transport_mode != TransportMode::File {
+        return (max_w, max_h);
+    }
+
+    let limited_w = if file_width_limit == 0 {
+        u32::MAX
+    } else {
+        file_width_limit
+    };
+    let limited_h = if file_height_limit == 0 {
+        u32::MAX
+    } else {
+        file_height_limit
+    };
+
+    // file モード時は設定値を上限として扱う。
+    // 0 は「上限なし」として解釈する。
+    (limited_w.max(1), limited_h.max(1))
 }
 
 fn image_pixel_count(image_dimensions: (u32, u32)) -> u64 {
@@ -120,6 +137,7 @@ pub(super) fn load_payload_hash(
 #[derive(Debug, Clone)]
 pub(super) struct PreparedImagePayload {
     pub(super) image_data: Arc<[u8]>,
+    pub(super) source_dimensions: (u32, u32),
     pub(super) image_dimensions: (u32, u32),
     pub(super) payload_hash: u64,
     pub(super) encoded_payload: Arc<str>,
@@ -131,19 +149,30 @@ pub(super) struct PreparedImagePayload {
 pub(super) fn prepare_image_payload(
     image_path: &Path,
     diff_mode: crate::model::config::ImageDiffMode,
-    _transport_mode: crate::model::config::TransportMode,
+    transport_mode: TransportMode,
+    image_filter_type: ImageFilterType,
+    file_width_limit: u32,
+    file_height_limit: u32,
 ) -> Result<PreparedImagePayload> {
     let started = Instant::now();
     let source_dims = ::image::image_dimensions(image_path).unwrap_or((1, 1));
-    let (max_w, max_h) = terminal_pixel_limit();
+    let (base_max_w, base_max_h) = terminal_pixel_limit();
+    let (max_w, max_h) = apply_transport_limit(
+        base_max_w,
+        base_max_h,
+        transport_mode,
+        file_width_limit,
+        file_height_limit,
+    );
     let needs_resize = should_resize_for_terminal(source_dims, max_w, max_h);
+    let resize_filter = image_filter_type.as_filter_type();
 
     let bytes = std::fs::read(image_path)?;
 
     let (image_data, image_dimensions, rgba_frame): (Arc<[u8]>, (u32, u32), Option<RgbaFrame>) =
         if needs_resize {
             let decoded = ::image::load_from_memory(&bytes)?;
-            let resized = resize_for_terminal(decoded, max_w, max_h);
+            let resized = resize_for_terminal(decoded, max_w, max_h, resize_filter);
             let resized_dims = resized.dimensions();
 
             // KGP f=100 で扱えるよう、縮小後は PNG に再エンコードする
@@ -188,6 +217,7 @@ pub(super) fn prepare_image_payload(
 
     Ok(PreparedImagePayload {
         image_data,
+        source_dimensions: source_dims,
         image_dimensions,
         payload_hash,
         encoded_payload,

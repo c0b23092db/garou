@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use crossterm::style::Color;
 use dirs::home_dir;
+use image::imageops::FilterType;
 use serde::{Deserialize, Deserializer};
 use std::{
     fs,
@@ -18,36 +19,6 @@ struct RawConfig {
     image: ImageConfig,
 }
 
-/// 画像の差分表示モードを表す列挙型
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
-pub enum ImageDiffMode {
-    All,
-    #[default]
-    Full,
-    Half,
-}
-
-/// Kitty Graphics Protocol の転送モードを表す列挙型
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum TransportMode {
-    /// 実行環境に応じて転送モードを選択する
-    #[default]
-    Auto,
-    /// t=d: payload を直接送信する
-    #[serde(alias = "d")]
-    Direct,
-    /// t=f: ファイルパス経由
-    #[serde(alias = "f")]
-    File,
-    /// t=t: 一時ファイル経由
-    #[serde(alias = "t")]
-    TempFile,
-    /// t=s: 共有メモリ経由（非対応環境では direct にフォールバック）
-    #[serde(alias = "s")]
-    SharedMemory,
-}
-
 /// 画像の差分表示モードを表す列挙型、アプリケーションの設定を管理する構造体
 #[derive(Debug, Clone, Deserialize)]
 pub struct ImageConfig {
@@ -63,6 +34,12 @@ pub struct ImageConfig {
     pub skip_step: u32,
     #[serde(default = "default_image_extensions")]
     pub extensions: Vec<String>,
+    #[serde(default = "default_image_width")]
+    pub image_width: u32,
+    #[serde(default = "default_image_height")]
+    pub image_height: u32,
+    #[serde(default, alias = "image_filtertype")]
+    pub filter_type: ImageFilterType,
 }
 
 impl Default for ImageConfig {
@@ -74,6 +51,9 @@ impl Default for ImageConfig {
             tile_grid: default_tile_grid(),
             skip_step: default_skip_step(),
             extensions: default_image_extensions(),
+            image_width: 5120,
+            image_height: 2880,
+            filter_type: ImageFilterType::Nearest,
         }
     }
 }
@@ -166,6 +146,59 @@ pub struct AppConfig {
     pub image: ImageConfig,
 }
 
+/// 画像の差分表示モードを表す列挙型
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+pub enum ImageDiffMode {
+    All,
+    #[default]
+    Full,
+    Half,
+}
+
+/// Kitty Graphics Protocol の転送モードを表す列挙型
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TransportMode {
+    /// 実行環境に応じて転送モードを選択する
+    #[default]
+    Auto,
+    /// t=d: payload を直接送信する
+    #[serde(alias = "d")]
+    Direct,
+    /// t=f: ファイルパス経由
+    #[serde(alias = "f")]
+    File,
+    /// t=t: 一時ファイル経由
+    #[serde(alias = "t")]
+    TempFile,
+    /// t=s: 共有メモリ経由（非対応環境では direct にフォールバック）
+    #[serde(alias = "s")]
+    SharedMemory,
+}
+
+/// 画像リサイズ時の補間フィルタ
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+pub enum ImageFilterType {
+    #[default]
+    Nearest,
+    Triangle,
+    CatmullRom,
+    Gaussian,
+    Lanczos3,
+}
+
+impl ImageFilterType {
+    pub fn as_filter_type(self) -> FilterType {
+        match self {
+            Self::Nearest => FilterType::Nearest,
+            Self::Triangle => FilterType::Triangle,
+            Self::CatmullRom => FilterType::CatmullRom,
+            Self::Gaussian => FilterType::Gaussian,
+            Self::Lanczos3 => FilterType::Lanczos3,
+        }
+    }
+}
+
 /// アプリケーションの設定を管理する構造体と、その関連関数
 impl AppConfig {
     /// 設定ファイルからアプリケーションの設定を読み込む関数
@@ -240,6 +273,13 @@ fn default_statusbar_bg_color() -> Color {
 }
 fn default_statusbar_fg_color() -> Color {
     Color::White
+}
+
+fn default_image_width() -> u32 {
+    5120
+}
+fn default_image_height() -> u32 {
+    2880
 }
 
 fn default_cache_lru_size() -> usize {

@@ -51,6 +51,9 @@ fn main() -> Result<()> {
             dirty_ratio: config.image.dirty_ratio,
             tile_grid: config.image.tile_grid,
             skip_step: config.image.skip_step,
+            image_width: config.image.image_width,
+            image_height: config.image.image_height,
+            image_filter_type: config.image.filter_type,
             image_extensions: config.image.extensions,
         },
     )?;

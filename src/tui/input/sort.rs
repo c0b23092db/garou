@@ -7,16 +7,25 @@ use super::{
     super::state::{RedrawMode, ViewerState},
 };
 
-pub(super) fn apply_sort(
-    image_files: &mut Vec<PathBuf>,
-    current_index: &mut usize,
-    redraw_mode: &mut RedrawMode,
-    state: &mut ViewerState,
-    sort_field: &mut SortField,
-    sort_descending: &mut bool,
-    new_field: SortField,
-    new_descending: bool,
-) {
+pub(super) struct SortContext<'a> {
+    pub image_files: &'a mut Vec<PathBuf>,
+    pub current_index: &'a mut usize,
+    pub redraw_mode: &'a mut RedrawMode,
+    pub state: &'a mut ViewerState,
+    pub sort_field: &'a mut SortField,
+    pub sort_descending: &'a mut bool,
+}
+
+pub(super) fn apply_sort(ctx: SortContext<'_>, new_field: SortField, new_descending: bool) {
+    let SortContext {
+        image_files,
+        current_index,
+        redraw_mode,
+        state,
+        sort_field,
+        sort_descending,
+    } = ctx;
+
     if image_files.is_empty() {
         return;
     }

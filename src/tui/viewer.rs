@@ -16,7 +16,7 @@ use std::{
 };
 
 use super::ConfigOption;
-use super::input::{process_key, process_mouse};
+use super::input::{KeyProcessContext, process_key, process_mouse};
 use super::state::{RedrawMode, ViewerState, Viewport};
 
 mod render;
@@ -30,6 +30,17 @@ struct RenderModeFlags {
     refresh_image: bool,
     full_refresh: bool,
     prefetch_after: bool,
+}
+
+struct EventContext<'a> {
+    image_files: &'a mut Vec<PathBuf>,
+    sort_field: &'a mut SortField,
+    sort_descending: &'a mut bool,
+    current_index: &'a mut usize,
+    redraw_mode: &'a mut RedrawMode,
+    state: &'a mut ViewerState,
+    viewport: &'a mut Viewport,
+    debounce_duration: Duration,
 }
 
 /// ビューワーを実行する関数
@@ -122,6 +133,9 @@ fn viewer_loop(
             dirty_ratio: options.dirty_ratio.clamp(0.0, 1.0),
             tile_grid: options.tile_grid.max(1),
             skip_step: options.skip_step,
+            image_width: options.image_width,
+            image_height: options.image_height,
+            image_filter_type: options.image_filter_type,
             zoom_factor: 1.0,
             pan_x: 0,
             pan_y: 0,
@@ -447,14 +461,16 @@ fn viewer_loop(
             if event::poll(Duration::from_millis(0))?
                 && handle_event(
                     event::read()?,
-                    &mut image_files,
-                    &mut sort_field,
-                    &mut sort_descending,
-                    current_index,
-                    &mut redraw_mode,
-                    &mut state,
-                    &mut viewport,
-                    debounce_duration,
+                    &mut EventContext {
+                        image_files: &mut image_files,
+                        sort_field: &mut sort_field,
+                        sort_descending: &mut sort_descending,
+                        current_index,
+                        redraw_mode: &mut redraw_mode,
+                        state: &mut state,
+                        viewport: &mut viewport,
+                        debounce_duration,
+                    },
                 )?
                 .0
             {
@@ -470,14 +486,16 @@ fn viewer_loop(
         if event::poll(idle_poll_interval)? {
             let (should_quit, index_changed) = handle_event(
                 event::read()?,
-                &mut image_files,
-                &mut sort_field,
-                &mut sort_descending,
-                current_index,
-                &mut redraw_mode,
-                &mut state,
-                &mut viewport,
-                debounce_duration,
+                &mut EventContext {
+                    image_files: &mut image_files,
+                    sort_field: &mut sort_field,
+                    sort_descending: &mut sort_descending,
+                    current_index,
+                    redraw_mode: &mut redraw_mode,
+                    state: &mut state,
+                    viewport: &mut viewport,
+                    debounce_duration,
+                },
             )?;
 
             if index_changed {
@@ -538,48 +556,40 @@ fn viewer_loop(
 }
 
 /// 入力イベントを処理する関数
-fn handle_event(
-    event: Event,
-    image_files: &mut Vec<PathBuf>,
-    sort_field: &mut SortField,
-    sort_descending: &mut bool,
-    current_index: &mut usize,
-    redraw_mode: &mut RedrawMode,
-    state: &mut ViewerState,
-    viewport: &mut Viewport,
-    debounce_duration: Duration,
-) -> Result<(bool, bool)> {
-    let previous_index = *current_index;
+fn handle_event(event: Event, ctx: &mut EventContext<'_>) -> Result<(bool, bool)> {
+    let previous_index = *ctx.current_index;
 
     let should_quit = match event {
         Event::Key(key) if key.kind == KeyEventKind::Press => process_key(
             key,
-            image_files,
-            current_index,
-            redraw_mode,
-            state,
-            debounce_duration,
-            viewport.height,
-            sort_field,
-            sort_descending,
+            KeyProcessContext {
+                image_files: ctx.image_files,
+                current_index: ctx.current_index,
+                redraw_mode: ctx.redraw_mode,
+                state: ctx.state,
+                debounce_duration: ctx.debounce_duration,
+                term_height: ctx.viewport.height,
+                sort_field: ctx.sort_field,
+                sort_descending: ctx.sort_descending,
+            },
         ),
         Event::Mouse(mouse) => process_mouse(
             mouse,
-            current_index,
-            redraw_mode,
-            state,
-            debounce_duration,
-            state.sidebar_size().max(1),
-            viewport.height,
+            ctx.current_index,
+            ctx.redraw_mode,
+            ctx.state,
+            ctx.debounce_duration,
+            ctx.state.sidebar_size().max(1),
+            ctx.viewport.height,
         ),
         Event::Resize(width, height) => {
-            viewport.width = width;
-            viewport.height = height;
-            *redraw_mode = RedrawMode::LayoutRefresh;
+            ctx.viewport.width = width;
+            ctx.viewport.height = height;
+            *ctx.redraw_mode = RedrawMode::LayoutRefresh;
             false
         }
         _ => false,
     };
 
-    Ok((should_quit, *current_index != previous_index))
+    Ok((should_quit, *ctx.current_index != previous_index))
 }

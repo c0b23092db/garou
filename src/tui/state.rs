@@ -1,7 +1,7 @@
 use crossterm::style::Color;
 use std::{collections::HashMap, time::Duration, time::Instant};
 
-use crate::model::config::{ImageDiffMode, TransportMode};
+use crate::model::config::{ImageDiffMode, ImageFilterType, TransportMode};
 
 use super::{
     render::{filetree::SidebarTree, image::ImageRenderState},
@@ -30,6 +30,9 @@ pub struct ConfigOption {
     pub dirty_ratio: f32,
     pub tile_grid: u32,
     pub skip_step: u32,
+    pub image_width: u32,
+    pub image_height: u32,
+    pub image_filter_type: ImageFilterType,
     pub image_extensions: Vec<String>,
 }
 
@@ -114,6 +117,12 @@ pub(super) struct ImageProcessingConfig {
     pub(super) tile_grid: u32,
     /// 差分判定の画素間引き設定 (0,2,4)
     pub(super) skip_step: u32,
+    /// File転送時の最大画像幅（0は無制限）
+    pub(super) image_width: u32,
+    /// File転送時の最大画像高さ（0は無制限）
+    pub(super) image_height: u32,
+    /// リサイズ時の補間フィルタ
+    pub(super) image_filter_type: ImageFilterType,
     /// 画像表示のズーム倍率 (fit=1.0)
     pub(super) zoom_factor: f32,
     /// 水平方向パン（セル単位）
@@ -293,6 +302,18 @@ impl ViewerState {
         self.image_config.skip_step
     }
 
+    pub(super) fn image_width_limit(&self) -> u32 {
+        self.image_config.image_width
+    }
+
+    pub(super) fn image_height_limit(&self) -> u32 {
+        self.image_config.image_height
+    }
+
+    pub(super) fn image_filter_type(&self) -> ImageFilterType {
+        self.image_config.image_filter_type
+    }
+
     pub(super) fn zoom_factor(&self) -> f32 {
         self.image_config.zoom_factor
     }
@@ -349,11 +370,4 @@ impl ViewerState {
         }
     }
 
-    pub(super) fn cache_hit_rate(&self) -> Option<f32> {
-        if self.perf.cache_requests == 0 {
-            None
-        } else {
-            Some(self.perf.cache_hits as f32 / self.perf.cache_requests as f32)
-        }
-    }
 }
