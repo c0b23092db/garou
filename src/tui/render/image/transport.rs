@@ -139,6 +139,76 @@ pub fn prepare_upload_payload(
     }
 }
 
+/// ワーカースレッド側で利用する payload 準備。
+/// file/temp_file はここで同期書き込みを済ませ、描画スレッドの停止を避ける。
+pub fn prepare_upload_payload_offthread(
+    requested: ResolvedTransport,
+    encoded_payload: &str,
+    image_data: &[u8],
+) -> UploadPayload {
+    match requested {
+        ResolvedTransport::File => {
+            let target = stable_file_png_path();
+            if let Some(payload) =
+                write_payload_to_path(target, image_data, ResolvedTransport::File)
+            {
+                return payload;
+            }
+
+            UploadPayload {
+                transport: ResolvedTransport::Direct,
+                payload: encoded_payload.to_string(),
+                data_size: image_data.len(),
+            }
+        }
+        ResolvedTransport::TempFile => {
+            let target = unique_temp_png_path();
+            if let Some(payload) =
+                write_payload_to_path(target, image_data, ResolvedTransport::TempFile)
+            {
+                return payload;
+            }
+
+            UploadPayload {
+                transport: ResolvedTransport::Direct,
+                payload: encoded_payload.to_string(),
+                data_size: image_data.len(),
+            }
+        }
+        // shared memory はプロセス内状態を扱うため描画側の既存経路を使用する。
+        ResolvedTransport::SharedMemory | ResolvedTransport::Direct => UploadPayload {
+            transport: ResolvedTransport::Direct,
+            payload: encoded_payload.to_string(),
+            data_size: image_data.len(),
+        },
+    }
+}
+
+fn write_payload_to_path(
+    target: PathBuf,
+    image_data: &[u8],
+    transport: ResolvedTransport,
+) -> Option<UploadPayload> {
+    if fs::write(&target, image_data).is_err() {
+        return None;
+    }
+
+    let path_str = target.to_string_lossy();
+    let payload = general_purpose::STANDARD.encode(path_str.as_bytes());
+    Some(UploadPayload {
+        transport,
+        payload,
+        data_size: image_data.len(),
+    })
+}
+
+fn stable_file_png_path() -> PathBuf {
+    let mut path = env::temp_dir();
+    let pid = std::process::id();
+    path.push(format!("garou-kitty-file-{}.png", pid));
+    path
+}
+
 impl SharedMemoryState {
     fn write_file_payload(&mut self, image_data: &[u8], temp_file: bool) -> Option<UploadPayload> {
         let target = if temp_file {

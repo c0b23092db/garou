@@ -81,16 +81,15 @@ pub(super) fn spawn_preview_worker() -> (
                 request = next;
             }
 
-            let payload =
-                prepare_image_payload(
-                    &request.path,
-                    request.diff_mode,
-                    request.transport_mode,
-                    request.image_filter_type,
-                    request.image_width_limit,
-                    request.image_height_limit,
-                )
-                .map_err(|e| e.to_string());
+            let payload = prepare_image_payload(
+                &request.path,
+                request.diff_mode,
+                request.transport_mode,
+                request.image_filter_type,
+                request.image_width_limit,
+                request.image_height_limit,
+            )
+            .map_err(|e| e.to_string());
             if resp_tx
                 .send(PreviewResponse {
                     index: request.index,

@@ -29,6 +29,7 @@ pub struct ImageRenderParams {
     pub payload_hash: u64,
     pub image_data: Arc<[u8]>,
     pub encoded_payload: Arc<str>,
+    pub prepared_upload_payload: Option<super::transport::UploadPayload>,
     pub refresh_image: bool,
     /// 画像の差分がどの程度存在していると差分更新ではなく完全再描画するかの閾値（0.0～1.0）
     pub dirty_ratio: f32,

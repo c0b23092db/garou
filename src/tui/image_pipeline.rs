@@ -10,7 +10,9 @@ use std::{
 };
 
 use super::{
-    render::image::{self as render_image, RgbaFrame},
+    render::image::{
+        self as render_image, RgbaFrame, UploadPayload, prepare_upload_payload_offthread,
+    },
     state::{NavDirection, ViewerState},
 };
 use crate::model::config::{ImageFilterType, TransportMode};
@@ -42,13 +44,20 @@ fn should_resize_for_terminal(source_dims: (u32, u32), max_w: u32, max_h: u32) -
     source_dims.0 > max_w || source_dims.1 > max_h
 }
 
-fn resize_for_terminal(image: DynamicImage, max_w: u32, max_h: u32, filter: FilterType) -> DynamicImage {
+fn resize_for_terminal(
+    image: DynamicImage,
+    max_w: u32,
+    max_h: u32,
+    filter: FilterType,
+) -> DynamicImage {
     let (w, h) = image.dimensions();
     if w <= max_w && h <= max_h {
         return image;
     }
 
-    let scale = (max_w as f32 / w as f32).min(max_h as f32 / h as f32).max(0.01);
+    let scale = (max_w as f32 / w as f32)
+        .min(max_h as f32 / h as f32)
+        .max(0.01);
     let target_w = ((w as f32 * scale).round() as u32).max(1);
     let target_h = ((h as f32 * scale).round() as u32).max(1);
     image.resize_exact(target_w, target_h, filter)
@@ -75,12 +84,32 @@ fn apply_transport_limit(
     } else {
         file_height_limit
     };
-
-    // file モード時は設定値を上限として扱う。
     // 0 は「上限なし」として解釈する。
     (limited_w.max(1), limited_h.max(1))
 }
 
+/// 画像の差分描画に常にペイロードハッシュを利用するモードかどうかを判定する関数
+pub(super) fn effective_transport_mode(
+    configured_mode: TransportMode,
+    source_dims: (u32, u32),
+    image_width_limit: u32,
+    image_height_limit: u32,
+) -> TransportMode {
+    if configured_mode == TransportMode::Direct {
+        return TransportMode::Direct;
+    }
+
+    let within_width = image_width_limit == 0 || source_dims.0 <= image_width_limit;
+    let within_height = image_height_limit == 0 || source_dims.1 <= image_height_limit;
+
+    if within_width && within_height {
+        configured_mode
+    } else {
+        TransportMode::Direct
+    }
+}
+
+/// 画像のピクセル数を計算する関数
 fn image_pixel_count(image_dimensions: (u32, u32)) -> u64 {
     u64::from(image_dimensions.0).saturating_mul(u64::from(image_dimensions.1))
 }
@@ -95,7 +124,11 @@ pub(super) fn should_decode_rgba_frame(
 }
 
 /// 大きな画像のペイロードハッシュを計算する関数。画像全体を読み込まずに、ファイルサイズや更新日時などのメタデータを利用してハッシュを生成する。
-fn large_image_payload_hash(image_path: &Path, image_dimensions: (u32, u32), image_data: &[u8]) -> u64 {
+fn large_image_payload_hash(
+    image_path: &Path,
+    image_dimensions: (u32, u32),
+    image_data: &[u8],
+) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
@@ -139,6 +172,8 @@ pub(super) struct PreparedImagePayload {
     pub(super) image_data: Arc<[u8]>,
     pub(super) source_dimensions: (u32, u32),
     pub(super) image_dimensions: (u32, u32),
+    pub(super) transport_mode: TransportMode,
+    pub(super) prepared_upload_payload: Option<UploadPayload>,
     pub(super) payload_hash: u64,
     pub(super) encoded_payload: Arc<str>,
     pub(super) rgba_frame: Option<RgbaFrame>,
@@ -156,6 +191,12 @@ pub(super) fn prepare_image_payload(
 ) -> Result<PreparedImagePayload> {
     let started = Instant::now();
     let source_dims = ::image::image_dimensions(image_path).unwrap_or((1, 1));
+    let transport_mode = effective_transport_mode(
+        transport_mode,
+        source_dims,
+        file_width_limit,
+        file_height_limit,
+    );
     let (base_max_w, base_max_h) = terminal_pixel_limit();
     let (max_w, max_h) = apply_transport_limit(
         base_max_w,
@@ -205,6 +246,17 @@ pub(super) fn prepare_image_payload(
         };
 
     let encoded_payload = Arc::<str>::from(general_purpose::STANDARD.encode(image_data.as_ref()));
+    let requested_transport = render_image::resolve_transport_mode(transport_mode);
+    let prepared_upload_payload = match requested_transport {
+        render_image::ResolvedTransport::File | render_image::ResolvedTransport::TempFile => {
+            Some(prepare_upload_payload_offthread(
+                requested_transport,
+                encoded_payload.as_ref(),
+                image_data.as_ref(),
+            ))
+        }
+        _ => None,
+    };
 
     // ハッシュ計算
     let payload_hash = if matches!(diff_mode, crate::model::config::ImageDiffMode::All) {
@@ -219,6 +271,8 @@ pub(super) fn prepare_image_payload(
         image_data,
         source_dimensions: source_dims,
         image_dimensions,
+        transport_mode,
+        prepared_upload_payload,
         payload_hash,
         encoded_payload,
         rgba_frame,

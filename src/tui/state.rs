@@ -369,5 +369,4 @@ impl ViewerState {
             self.perf.cache_hits = self.perf.cache_hits.saturating_add(1);
         }
     }
-
 }

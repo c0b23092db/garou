@@ -51,8 +51,8 @@ impl Default for ImageConfig {
             tile_grid: default_tile_grid(),
             skip_step: default_skip_step(),
             extensions: default_image_extensions(),
-            image_width: 5120,
-            image_height: 2880,
+            image_width: default_image_width(),
+            image_height: default_image_height(),
             filter_type: ImageFilterType::Nearest,
         }
     }

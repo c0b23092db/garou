@@ -29,10 +29,13 @@ use self::{
     difference::{dirty_ratio_from_area, extract_rect_rgba, find_dirty_tiles},
     layout::compute_placement,
     protocol::{send_patch_rgba, send_place, send_upload},
-    transport::{prepare_upload_payload, resolve_transport_mode},
+    transport::prepare_upload_payload,
 };
 
 pub use protocol::send_delete;
+pub use transport::{
+    ResolvedTransport, UploadPayload, prepare_upload_payload_offthread, resolve_transport_mode,
+};
 
 /// 画像の内容からハッシュ値を計算する。
 pub(in crate::tui) fn hash_image_payload(image_data: &[u8], diff_mode: ImageDiffMode) -> u64 {
@@ -150,13 +153,17 @@ pub fn render_image(
                 params.rgba_frame.clone()
             };
 
-            let requested = resolve_transport_mode(params.transport_mode);
-            let upload_payload = prepare_upload_payload(
-                requested,
-                &params.encoded_payload,
-                params.image_data.as_ref(),
-                &mut state.shared_memory,
-            );
+            let upload_payload = if let Some(prepared) = params.prepared_upload_payload.clone() {
+                prepared
+            } else {
+                let requested = resolve_transport_mode(params.transport_mode);
+                prepare_upload_payload(
+                    requested,
+                    &params.encoded_payload,
+                    params.image_data.as_ref(),
+                    &mut state.shared_memory,
+                )
+            };
             send_upload(stdout, placement, &upload_payload)?;
             stdout.flush()?;
             upload_completed = true;

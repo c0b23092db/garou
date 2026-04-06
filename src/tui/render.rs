@@ -24,8 +24,8 @@ use self::{
     filetree::{FileTreeEntry, render_filetree},
     header::render_header,
     image::{
-        ImageRenderMetrics, ImageRenderParams, ImageRenderState, RgbaFrame, render_image,
-        send_delete,
+        ImageRenderMetrics, ImageRenderParams, ImageRenderState, RgbaFrame, UploadPayload,
+        render_image, send_delete,
     },
     overlay::{build_overlay_info, render_overlay},
     statusbar::{StatusbarContent, render_statusbar},
@@ -94,6 +94,8 @@ pub struct RenderOptions {
     pub image_data: Arc<[u8]>,
     /// 端末に送信するペイロードのエンコード後の文字列
     pub encoded_payload: Arc<str>,
+    /// ワーカーで事前準備した転送payload（file/temp向け）
+    pub prepared_upload_payload: Option<UploadPayload>,
     /// タイル差分送信を許可する最大面積比率 (0.0-1.0)
     pub dirty_ratio: f32,
     /// 差分判定タイルの一辺ピクセル数
@@ -198,6 +200,7 @@ pub fn render_frame(
                 payload_hash: options.payload_hash,
                 image_data: options.image_data,
                 encoded_payload: options.encoded_payload,
+                prepared_upload_payload: options.prepared_upload_payload,
                 refresh_image: options.refresh_image,
                 dirty_ratio: options.dirty_ratio,
                 tile_grid: options.tile_grid,
@@ -222,8 +225,6 @@ pub fn render_frame(
                 available_height,
                 message,
             )?;
-        } else {
-            queue!(stdout, MoveTo(image_start_x, 1), Clear(ClearType::CurrentLine))?;
         }
     }
 

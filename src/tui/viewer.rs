@@ -158,8 +158,7 @@ fn viewer_loop(
         &mut state,
         initial_diff_mode,
         false,
-    )
-    {
+    ) {
         pending_preview_started_at = Some(Instant::now());
         pending_loading_rendered = false;
         render_pending_mode(
@@ -191,8 +190,7 @@ fn viewer_loop(
                     pending_preview_payload = Some((response.index, response.generation, payload));
                     redraw_mode = RedrawMode::ImageReplace;
                 }
-                Err(error) if response.index == *current_index =>
-                {
+                Err(error) if response.index == *current_index => {
                     render_pending_mode(
                         stdout,
                         &image_files,
@@ -225,7 +223,7 @@ fn viewer_loop(
                 *current_index,
                 &viewport,
                 &mut state,
-                Some("Loading images across time"),
+                Some("Load image access time"),
                 RenderModeFlags {
                     refresh_image: false,
                     full_refresh: false,

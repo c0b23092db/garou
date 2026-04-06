@@ -3,8 +3,8 @@ use std::{io, path::PathBuf, sync::Arc, time::Duration, time::Instant};
 use anyhow::Result;
 
 use super::super::image_pipeline::{
-    PreparedImagePayload, is_always_upload_mode, load_encoded_payload, load_image_data,
-    load_image_dimensions, load_payload_hash, load_rgba_frame, prefetch_neighbors,
+    PreparedImagePayload, effective_transport_mode, is_always_upload_mode, load_encoded_payload,
+    load_image_data, load_image_dimensions, load_payload_hash, load_rgba_frame, prefetch_neighbors,
     should_decode_rgba_frame,
 };
 use super::super::render::{FrameRenderInput, RenderOptions, render_frame};
@@ -23,6 +23,12 @@ pub(super) fn render_current_mode(
     let processing_started = Instant::now();
     let image_data = load_image_data(image_files, current_index, state)?;
     let image_dimensions = load_image_dimensions(image_files, current_index, state)?;
+    let transport_mode = effective_transport_mode(
+        state.transport_mode(),
+        image_dimensions,
+        state.image_width_limit(),
+        state.image_height_limit(),
+    );
     let always_upload = is_always_upload_mode(state.image_diff_mode());
     let payload_hash = if always_upload {
         0
@@ -69,13 +75,14 @@ pub(super) fn render_current_mode(
             statusbar_bg_color: state.statusbar_bg_color(),
             statusbar_fg_color: state.statusbar_fg_color(),
             always_upload,
-            transport_mode: state.transport_mode(),
+            transport_mode,
             diff_mode: state.image_diff_mode(),
             image_dimensions,
             source_dimensions: image_dimensions,
             payload_hash,
             image_data,
             encoded_payload,
+            prepared_upload_payload: None,
             dirty_ratio: state.dirty_ratio(),
             tile_grid: state.tile_grid(),
             skip_step: state.skip_step(),
@@ -153,13 +160,14 @@ pub(super) fn render_prepared_mode(
             statusbar_bg_color: state.statusbar_bg_color(),
             statusbar_fg_color: state.statusbar_fg_color(),
             always_upload,
-            transport_mode: state.transport_mode(),
+            transport_mode: prepared.transport_mode,
             diff_mode: state.image_diff_mode(),
             image_dimensions: prepared.image_dimensions,
             source_dimensions: prepared.source_dimensions,
             payload_hash: prepared.payload_hash,
             image_data: prepared.image_data,
             encoded_payload: prepared.encoded_payload,
+            prepared_upload_payload: prepared.prepared_upload_payload,
             dirty_ratio: state.dirty_ratio(),
             tile_grid: state.tile_grid(),
             skip_step: state.skip_step(),
@@ -231,6 +239,7 @@ pub(super) fn render_pending_mode(
             payload_hash: 0,
             image_data: Arc::<[u8]>::from([]),
             encoded_payload: Arc::<str>::from(""),
+            prepared_upload_payload: None,
             dirty_ratio: state.dirty_ratio(),
             tile_grid: state.tile_grid(),
             skip_step: state.skip_step(),

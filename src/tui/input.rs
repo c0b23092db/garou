@@ -135,7 +135,12 @@ pub fn process_key(key: KeyEvent, ctx: KeyProcessContext<'_>) -> bool {
                         debounce_duration,
                     );
                 } else {
-                    sync_sidebar_to_image(*current_index, state, image_files, NavDirection::Backward);
+                    sync_sidebar_to_image(
+                        *current_index,
+                        state,
+                        image_files,
+                        NavDirection::Backward,
+                    );
                     schedule_redraw(redraw_mode, state, debounce_duration);
                 }
             }
@@ -160,7 +165,12 @@ pub fn process_key(key: KeyEvent, ctx: KeyProcessContext<'_>) -> bool {
                         debounce_duration,
                     );
                 } else {
-                    sync_sidebar_to_image(*current_index, state, image_files, NavDirection::Forward);
+                    sync_sidebar_to_image(
+                        *current_index,
+                        state,
+                        image_files,
+                        NavDirection::Forward,
+                    );
                     schedule_redraw(redraw_mode, state, debounce_duration);
                 }
             }
@@ -185,7 +195,12 @@ pub fn process_key(key: KeyEvent, ctx: KeyProcessContext<'_>) -> bool {
                         debounce_duration,
                     );
                 } else {
-                    sync_sidebar_to_image(*current_index, state, image_files, NavDirection::Backward);
+                    sync_sidebar_to_image(
+                        *current_index,
+                        state,
+                        image_files,
+                        NavDirection::Backward,
+                    );
                     schedule_redraw(redraw_mode, state, debounce_duration);
                 }
             }
@@ -210,7 +225,12 @@ pub fn process_key(key: KeyEvent, ctx: KeyProcessContext<'_>) -> bool {
                         debounce_duration,
                     );
                 } else {
-                    sync_sidebar_to_image(*current_index, state, image_files, NavDirection::Forward);
+                    sync_sidebar_to_image(
+                        *current_index,
+                        state,
+                        image_files,
+                        NavDirection::Forward,
+                    );
                     schedule_redraw(redraw_mode, state, debounce_duration);
                 }
             }

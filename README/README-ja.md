@@ -99,6 +99,9 @@ Options:
 extensions = ["png", "jpg", "jpeg", "gif", "webp", "bmp"]
 diff_mode = "Full"
 transport_mode = "auto"
+filter_type = "Nearest"
+image_width = 5120
+image_height = 5000
 dirty_ratio = 0.1
 tile_grid = 32
 skip_step = 1
@@ -129,7 +132,7 @@ max_bytes = 268435456 # キャッシュ総容量上限（バイト）
 - `Full`: RGB（FFFFFF）のすべての番地を判定して変更がある場合のみ更新する
 - `Half`: RGB（FFFFFF）の0番地、2番地、4番地のみ判定する
 
-#### transport_mode(Kitty Graphics Protocolの転送モード)
+#### transport_mode（Kitty Graphics Protocolの転送モード）
 - `auto`
 - `direct`, `d`
 - `file`, `f`
@@ -139,6 +142,20 @@ max_bytes = 268435456 # キャッシュ総容量上限（バイト）
 ##### autoの挙動
 - Linux: `shared_memory` -> `direct`
 - Windows: `direct`
+
+#### image_width, image_width（`file`などの最大サイズ）
+transport_modeが`file`,`temp_file`,`shared_memory`の時、描画する画像の最大サイズ。
+これを超える画像を読み込んだ場合、`direct`としてフォールバックします。
+image_width = 5120
+image_height = 2880
+
+#### filter_type（image::imageops::FilterType）
+transport_modeが`direct`の時に行うデコード処理です。
+- `Nearest`
+- `Triangle`
+- `CatmullRom`
+- `Gaussian`
+- `Lanczos3`
 
 #### 差分判定の閾値（dirty_ratio）
 差分かどうかを判定する閾値です。0.0~1.0が設定できます。
@@ -221,10 +238,6 @@ prefetch_size = 1
 
 - パフォーマンスメータ／統計表示（「直近の描画にかかった時間」「キャッシュヒット率」「diff 判定が走ったタイル数」など）
   - キャッシュヒット率・描画時間などの計測基盤は既に存在。statusbar/headerに追加表示するだけ。プロジェクトの性能重視ポリシーに揃う。
-- ソート条件の切り替え
-  - 現在は自然ソート固定。キー入力で「名前順→日付順→サイズ順」など切り替え可能。サイドバーツリーの再構築のみ。ファイルツリー側の変更のみで完結。
-- 画像情報オーバーレイ
-  - 幅・高さ・ファイルサイズ・形式などを画像上に重ねて表示。既存の Kitty Graphics Protocol 機能で対応可能
 - キーバインドのユーザー定義
   - 現在は hardcoded。設定ファイル駆動に変更し、input.rs を設定参照に修正。競合検出処理は追加工数。リファクタリング投資。
 - 簡易ファイル操作（削除・リネーム・別フォルダへ移動）
@@ -232,7 +245,8 @@ prefetch_size = 1
 - ズーム・パン・フィット
   - Kitty Graphics Protocol の z パラメータで実現可能だが、TUI上のズーム率表示/パン入力方法の設計が必要。プロトコル仕様確認後に判断。
 
-## 参考
+## 着想
+- Kitty Graphic Protocol: ターミナルでの画像表示
 - yazi: 高速な画像表示
 - Neovim: キーボード操作
 
