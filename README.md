@@ -4,6 +4,8 @@ siv.exe
 ```
 **High-speed TUI image viewer using Kitty Graphics Protocol**
 
+![Demo Movie](README/gif.gif)
+
 日本語 - [README-ja.md](README/README-ja.md)
 
 ## ⭐ Features

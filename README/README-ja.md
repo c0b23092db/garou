@@ -4,6 +4,8 @@ siv.exe
 ```
 **Kitty Graphics Protocolを使用した高速TUI画像ビューワー**
 
+![Demo Movie](gif.gif)
+
 English - [README.md](../README.md)
 
 ## ⭐ 特徴
