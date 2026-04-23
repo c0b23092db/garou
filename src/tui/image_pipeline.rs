@@ -5,6 +5,7 @@ use image::{DynamicImage, GenericImageView, ImageFormat, imageops::FilterType};
 use std::{
     io::Cursor,
     path::{Path, PathBuf},
+    hash::{Hash, Hasher},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -12,6 +13,7 @@ use std::{
 use super::{
     render::image::{
         self as render_image, RgbaFrame, UploadPayload, prepare_upload_payload_offthread,
+        UploadPixelFormat,
     },
     state::{NavDirection, ViewerState},
 };
@@ -19,6 +21,7 @@ use crate::model::config::{ImageFilterType, TransportMode};
 
 /// 画像の最大ピクセル数を定義する定数
 const MAX_RGBA_DIFF_PIXELS: u64 = 32 * 1024 * 1024;
+const MAX_DIRECT_RGBA_UPLOAD_BYTES: usize = 512 * 1024;
 const CELL_PIXEL_WIDTH: u32 = 8;
 const CELL_PIXEL_HEIGHT: u32 = 16;
 const DPI_SCALE_NUM: u32 = 1;
@@ -123,24 +126,20 @@ pub(super) fn should_decode_rgba_frame(
         && image_pixel_count(image_dimensions) <= MAX_RGBA_DIFF_PIXELS
 }
 
-/// 大きな画像のペイロードハッシュを計算する関数。画像全体を読み込まずに、ファイルサイズや更新日時などのメタデータを利用してハッシュを生成する。
-fn large_image_payload_hash(
-    image_path: &Path,
-    image_dimensions: (u32, u32),
-    image_data: &[u8],
-) -> u64 {
+/// 画像のメタデータから再生成判定用ハッシュを計算する。
+fn image_metadata_hash(image_path: &Path, image_dimensions: (u32, u32)) -> u64 {
     use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
 
     let mut hasher = DefaultHasher::new();
+    image_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .hash(&mut hasher);
     image_dimensions.hash(&mut hasher);
-    image_data.len().hash(&mut hasher);
 
     if let Ok(metadata) = std::fs::metadata(image_path) {
         metadata.len().hash(&mut hasher);
-        if let Ok(modified) = metadata.modified() {
-            modified.hash(&mut hasher);
-        }
     }
 
     hasher.finish()
@@ -150,7 +149,7 @@ fn large_image_payload_hash(
 pub(super) fn load_payload_hash(
     index: usize,
     image_path: &Path,
-    image_data: &[u8],
+    _image_data: &[u8],
     image_dimensions: (u32, u32),
     state: &mut ViewerState,
 ) -> u64 {
@@ -158,11 +157,7 @@ pub(super) fn load_payload_hash(
         return cached;
     }
 
-    let hash = if should_decode_rgba_frame(image_dimensions, state.image_diff_mode()) {
-        render_image::hash_image_payload(image_data, state.image_diff_mode())
-    } else {
-        large_image_payload_hash(image_path, image_dimensions, image_data)
-    };
+    let hash = image_metadata_hash(image_path, image_dimensions);
     state.payload_hash_cache_mut().insert(index, hash);
     hash
 }
@@ -188,6 +183,7 @@ pub(super) fn prepare_image_payload(
     image_filter_type: ImageFilterType,
     file_width_limit: u32,
     file_height_limit: u32,
+    allow_rgba_decode: bool,
 ) -> Result<PreparedImagePayload> {
     let started = Instant::now();
     let source_dims = ::image::image_dimensions(image_path).unwrap_or((1, 1));
@@ -210,39 +206,63 @@ pub(super) fn prepare_image_payload(
 
     let bytes = std::fs::read(image_path)?;
 
-    let (image_data, image_dimensions, rgba_frame): (Arc<[u8]>, (u32, u32), Option<RgbaFrame>) =
+    let (image_data, image_dimensions, rgba_frame, is_raw_rgba_direct): (Arc<[u8]>, (u32, u32), Option<RgbaFrame>, bool) =
         if needs_resize {
             let decoded = ::image::load_from_memory(&bytes)?;
             let resized = resize_for_terminal(decoded, max_w, max_h, resize_filter);
             let resized_dims = resized.dimensions();
 
-            // KGP f=100 で扱えるよう、縮小後は PNG に再エンコードする
-            let mut png_bytes = Vec::new();
+            let rgba_upload_bytes = usize::try_from(
+                u64::from(resized_dims.0)
+                    .saturating_mul(u64::from(resized_dims.1))
+                    .saturating_mul(4),
+            )
+            .unwrap_or(usize::MAX);
+
+            if transport_mode == TransportMode::Direct
+                && rgba_upload_bytes <= MAX_DIRECT_RGBA_UPLOAD_BYTES
             {
-                let mut cursor = Cursor::new(&mut png_bytes);
-                resized.write_to(&mut cursor, ImageFormat::Png)?;
-            }
-
-            let rgba_frame = if should_decode_rgba_frame(resized_dims, diff_mode) {
                 let rgba = resized.to_rgba8();
-                Some(RgbaFrame {
-                    width: resized_dims.0,
-                    height: resized_dims.1,
-                    pixels: Arc::from(rgba.into_raw()),
-                })
+                let raw = Arc::<[u8]>::from(rgba.into_raw());
+                let rgba_frame = if allow_rgba_decode && should_decode_rgba_frame(resized_dims, diff_mode) {
+                    Some(RgbaFrame {
+                        width: resized_dims.0,
+                        height: resized_dims.1,
+                        pixels: raw.clone(),
+                    })
+                } else {
+                    None
+                };
+                (raw, resized_dims, rgba_frame, true)
             } else {
-                None
-            };
+                // file/temp/shared は互換性維持のため PNG ペイロードを継続利用する
+                let mut png_bytes = Vec::new();
+                {
+                    let mut cursor = Cursor::new(&mut png_bytes);
+                    resized.write_to(&mut cursor, ImageFormat::Png)?;
+                }
 
-            (Arc::from(png_bytes), resized_dims, rgba_frame)
+                let rgba_frame = if allow_rgba_decode && should_decode_rgba_frame(resized_dims, diff_mode) {
+                    let rgba = resized.to_rgba8();
+                    Some(RgbaFrame {
+                        width: resized_dims.0,
+                        height: resized_dims.1,
+                        pixels: Arc::from(rgba.into_raw()),
+                    })
+                } else {
+                    None
+                };
+
+                (Arc::from(png_bytes), resized_dims, rgba_frame, false)
+            }
         } else {
             let image_data: Arc<[u8]> = Arc::from(bytes.clone());
-            let rgba_frame = if should_decode_rgba_frame(source_dims, diff_mode) {
+            let rgba_frame = if allow_rgba_decode && should_decode_rgba_frame(source_dims, diff_mode) {
                 render_image::decode_rgba_payload(&bytes)
             } else {
                 None
             };
-            (image_data, source_dims, rgba_frame)
+            (image_data, source_dims, rgba_frame, false)
         };
 
     let encoded_payload = Arc::<str>::from(general_purpose::STANDARD.encode(image_data.as_ref()));
@@ -255,17 +275,19 @@ pub(super) fn prepare_image_payload(
                 image_data.as_ref(),
             ))
         }
+        render_image::ResolvedTransport::Direct if is_raw_rgba_direct => Some(UploadPayload {
+            transport: render_image::ResolvedTransport::Direct,
+            payload: encoded_payload.as_ref().to_string(),
+            data_size: image_data.len(),
+            pixel_format: UploadPixelFormat::Rgba,
+            pixel_width: image_dimensions.0,
+            pixel_height: image_dimensions.1,
+        }),
         _ => None,
     };
 
     // ハッシュ計算
-    let payload_hash = if matches!(diff_mode, crate::model::config::ImageDiffMode::All) {
-        0
-    } else if should_decode_rgba_frame(image_dimensions, diff_mode) {
-        render_image::hash_image_payload(image_data.as_ref(), diff_mode)
-    } else {
-        large_image_payload_hash(image_path, image_dimensions, image_data.as_ref())
-    };
+    let payload_hash = image_metadata_hash(image_path, image_dimensions);
 
     Ok(PreparedImagePayload {
         image_data,
@@ -329,21 +351,11 @@ pub(super) fn load_encoded_payload(image_data: &[u8]) -> Arc<str> {
 
 /// RGBAフレームを取得する関数。キャッシュがあればキャッシュを優先する。
 pub(super) fn load_rgba_frame(
-    index: usize,
+    _index: usize,
     image_data: &[u8],
-    state: &mut ViewerState,
+    _state: &mut ViewerState,
 ) -> Option<RgbaFrame> {
-    if state.image_cache().enabled()
-        && let Some(cached) = state.image_cache_mut().get_rgba(index)
-    {
-        return Some(cached);
-    }
-
-    let decoded = render_image::decode_rgba_payload(image_data)?;
-    if state.image_cache().enabled() {
-        state.image_cache_mut().insert_rgba(index, decoded.clone());
-    }
-    Some(decoded)
+    render_image::decode_rgba_payload(image_data)
 }
 
 /// 隣接画像を先読みする関数

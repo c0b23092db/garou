@@ -26,6 +26,8 @@ pub struct ImageRenderParams {
     pub transport_mode: TransportMode,
     pub diff_mode: ImageDiffMode,
     pub image_dimensions: (u32, u32),
+    pub image_id: u32,
+    pub id_cache_hit: bool,
     pub payload_hash: u64,
     pub image_data: Arc<[u8]>,
     pub encoded_payload: Arc<str>,
@@ -58,6 +60,8 @@ pub struct ImageRenderState {
     pub(super) last_placement: Option<(u16, u16, u32, u32)>,
     /// 最後にアップロード済みの RGBA フレーム（差分更新用）
     pub(super) last_rgba_frame: Option<RgbaFrame>,
+    /// 直近で表示に利用した Kitty image ID
+    pub(super) active_image_id: Option<u32>,
     /// shared memory 転送時に生存期間を管理する保持領域
     pub(super) shared_memory: SharedMemoryState,
 }
@@ -80,5 +84,10 @@ impl ImageRenderState {
         self.last_payload_hash = None;
         self.last_placement = None;
         self.last_rgba_frame = None;
+        self.active_image_id = None;
+    }
+
+    pub(crate) fn active_image_id(&self) -> Option<u32> {
+        self.active_image_id
     }
 }

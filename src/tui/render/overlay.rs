@@ -9,7 +9,8 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[derive(Debug, Clone)]
 pub struct OverlayInfo {
-    pub image_dimensions: (u32, u32),
+    pub source_dimensions: (u32, u32),
+    pub resized_dimensions: (u32, u32),
     pub file_size_bytes: Option<u64>,
     pub file_name: String,
     pub format: String,
@@ -25,14 +26,19 @@ pub fn render_overlay(
         return Ok(());
     }
 
-    let size_text = format_file_size(info.file_size_bytes);
-    let dims_text = format!("{}x{}", info.image_dimensions.0, info.image_dimensions.1);
+    let file_size_text = format_file_size(info.file_size_bytes);
+    let size_text = format!("{}x{}", info.source_dimensions.0, info.source_dimensions.1);
+    let resized_text = format!(
+        "{}x{}",
+        info.resized_dimensions.0, info.resized_dimensions.1
+    );
 
     let mut lines = [
         format!("Name: {}", info.file_name),
         format!("Format: {}", info.format),
-        format!("Dimensions: {}", dims_text),
         format!("Size: {}", size_text),
+        format!("Resize: {}", resized_text),
+        format!("File: {}", file_size_text),
     ];
 
     let max_line_width = lines
@@ -114,7 +120,11 @@ fn truncate_to_width(text: &str, max_width: usize) -> String {
     out
 }
 
-pub fn build_overlay_info(path: &Path, image_dimensions: (u32, u32)) -> OverlayInfo {
+pub fn build_overlay_info(
+    path: &Path,
+    source_dimensions: (u32, u32),
+    resized_dimensions: (u32, u32),
+) -> OverlayInfo {
     let file_name = path
         .file_name()
         .and_then(|n| n.to_str())
@@ -128,7 +138,8 @@ pub fn build_overlay_info(path: &Path, image_dimensions: (u32, u32)) -> OverlayI
     let file_size_bytes = std::fs::metadata(path).ok().map(|meta| meta.len());
 
     OverlayInfo {
-        image_dimensions,
+        source_dimensions,
+        resized_dimensions,
         file_size_bytes,
         file_name,
         format,

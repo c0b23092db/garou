@@ -86,6 +86,10 @@ pub struct RenderOptions {
     pub diff_mode: ImageDiffMode,
     /// 画像の幅と高さ
     pub image_dimensions: (u32, u32),
+    /// Kitty Graphics Protocol で使用する image ID
+    pub image_id: u32,
+    /// index + payload_hash がIDキャッシュに存在するか
+    pub id_cache_hit: bool,
     /// 元画像の幅と高さ（前処理前）
     pub source_dimensions: (u32, u32),
     /// 画像データのハッシュ値（描画の差分検出に使用）
@@ -171,7 +175,9 @@ pub fn render_frame(
 
     let render_metrics = if options.skip_image {
         if is_image_size_limit_error || !options.preserve_image {
-            send_delete(stdout)?;
+            if let Some(active_id) = image_render_state.active_image_id() {
+                send_delete(stdout, active_id)?;
+            }
             image_render_state.reset_upload_state();
             queue!(
                 stdout,
@@ -197,6 +203,8 @@ pub fn render_frame(
                 transport_mode: options.transport_mode,
                 diff_mode: options.diff_mode,
                 image_dimensions: options.image_dimensions,
+                image_id: options.image_id,
+                id_cache_hit: options.id_cache_hit,
                 payload_hash: options.payload_hash,
                 image_data: options.image_data,
                 encoded_payload: options.encoded_payload,
@@ -281,7 +289,7 @@ pub fn render_frame(
         && !options.skip_image
         && let Some(path) = input.image_files.get(input.current_index)
     {
-        let info = build_overlay_info(path, options.image_dimensions);
+        let info = build_overlay_info(path, options.source_dimensions, options.image_dimensions);
         render_overlay(stdout, term_width, term_height, &info)?;
     }
 

@@ -24,6 +24,15 @@ pub enum ResolvedTransport {
     SharedMemory,
 }
 
+/// アップロードする画像データの形式
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UploadPixelFormat {
+    /// f=100: PNG などのエンコード済み画像
+    EncodedImage,
+    /// f=32: RGBA 生データ
+    Rgba,
+}
+
 /// プロトコル送信に必要な転送情報
 #[derive(Debug, Clone)]
 pub struct UploadPayload {
@@ -33,6 +42,12 @@ pub struct UploadPayload {
     pub payload: String,
     /// 画像データの生サイズ
     pub data_size: usize,
+    /// 画像ペイロードのピクセル形式
+    pub pixel_format: UploadPixelFormat,
+    /// RGBA 生データ時の画像幅（それ以外は 0）
+    pub pixel_width: u32,
+    /// RGBA 生データ時の画像高さ（それ以外は 0）
+    pub pixel_height: u32,
 }
 
 /// shared memory のライフサイクルを保持する状態
@@ -104,6 +119,9 @@ pub fn prepare_upload_payload(
                 transport: ResolvedTransport::Direct,
                 payload: encoded_payload.to_string(),
                 data_size: image_data.len(),
+                pixel_format: UploadPixelFormat::EncodedImage,
+                pixel_width: 0,
+                pixel_height: 0,
             }
         }
         ResolvedTransport::TempFile => {
@@ -115,6 +133,9 @@ pub fn prepare_upload_payload(
                 transport: ResolvedTransport::Direct,
                 payload: encoded_payload.to_string(),
                 data_size: image_data.len(),
+                pixel_format: UploadPixelFormat::EncodedImage,
+                pixel_width: 0,
+                pixel_height: 0,
             }
         }
         ResolvedTransport::SharedMemory => {
@@ -129,12 +150,18 @@ pub fn prepare_upload_payload(
                 transport: ResolvedTransport::Direct,
                 payload: encoded_payload.to_string(),
                 data_size: image_data.len(),
+                pixel_format: UploadPixelFormat::EncodedImage,
+                pixel_width: 0,
+                pixel_height: 0,
             }
         }
         ResolvedTransport::Direct => UploadPayload {
             transport: ResolvedTransport::Direct,
             payload: encoded_payload.to_string(),
             data_size: image_data.len(),
+            pixel_format: UploadPixelFormat::EncodedImage,
+            pixel_width: 0,
+            pixel_height: 0,
         },
     }
 }
@@ -159,6 +186,9 @@ pub fn prepare_upload_payload_offthread(
                 transport: ResolvedTransport::Direct,
                 payload: encoded_payload.to_string(),
                 data_size: image_data.len(),
+                pixel_format: UploadPixelFormat::EncodedImage,
+                pixel_width: 0,
+                pixel_height: 0,
             }
         }
         ResolvedTransport::TempFile => {
@@ -173,6 +203,9 @@ pub fn prepare_upload_payload_offthread(
                 transport: ResolvedTransport::Direct,
                 payload: encoded_payload.to_string(),
                 data_size: image_data.len(),
+                pixel_format: UploadPixelFormat::EncodedImage,
+                pixel_width: 0,
+                pixel_height: 0,
             }
         }
         // shared memory はプロセス内状態を扱うため描画側の既存経路を使用する。
@@ -180,6 +213,9 @@ pub fn prepare_upload_payload_offthread(
             transport: ResolvedTransport::Direct,
             payload: encoded_payload.to_string(),
             data_size: image_data.len(),
+            pixel_format: UploadPixelFormat::EncodedImage,
+            pixel_width: 0,
+            pixel_height: 0,
         },
     }
 }
@@ -199,6 +235,9 @@ fn write_payload_to_path(
         transport,
         payload,
         data_size: image_data.len(),
+        pixel_format: UploadPixelFormat::EncodedImage,
+        pixel_width: 0,
+        pixel_height: 0,
     })
 }
 
@@ -239,6 +278,9 @@ impl SharedMemoryState {
             },
             payload,
             data_size: image_data.len(),
+            pixel_format: UploadPixelFormat::EncodedImage,
+            pixel_width: 0,
+            pixel_height: 0,
         })
     }
 }
@@ -269,6 +311,9 @@ impl SharedMemoryState {
             transport: ResolvedTransport::SharedMemory,
             payload,
             data_size: image_data.len(),
+            pixel_format: UploadPixelFormat::EncodedImage,
+            pixel_width: 0,
+            pixel_height: 0,
         })
     }
 }

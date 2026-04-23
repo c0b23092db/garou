@@ -8,6 +8,7 @@ use super::super::image_pipeline::{
     should_decode_rgba_frame,
 };
 use super::super::render::{FrameRenderInput, RenderOptions, render_frame};
+use super::super::render::image::UploadPixelFormat;
 use super::super::state::ViewerState;
 use super::RenderModeFlags;
 
@@ -41,8 +42,16 @@ pub(super) fn render_current_mode(
             state,
         )
     };
+    let (image_id, id_cache_hit_raw) = state.ensure_kitty_image_id(current_index, payload_hash);
+    let id_cache_hit = !always_upload && id_cache_hit_raw;
     let encoded_payload = load_encoded_payload(image_data.as_ref());
-    let rgba_frame = if should_decode_rgba_frame(image_dimensions, state.image_diff_mode()) {
+    let should_decode_for_diff = !flags.refresh_image
+        && !always_upload
+        && !id_cache_hit
+        && state.image_render_state.active_image_id() == Some(image_id);
+    let rgba_frame = if should_decode_for_diff
+        && should_decode_rgba_frame(image_dimensions, state.image_diff_mode())
+    {
         load_rgba_frame(current_index, image_data.as_ref(), state)
     } else {
         None
@@ -78,6 +87,8 @@ pub(super) fn render_current_mode(
             transport_mode,
             diff_mode: state.image_diff_mode(),
             image_dimensions,
+            image_id,
+            id_cache_hit,
             source_dimensions: image_dimensions,
             payload_hash,
             image_data,
@@ -121,11 +132,19 @@ pub(super) fn render_prepared_mode(
     flags: RenderModeFlags,
 ) -> Result<()> {
     let always_upload = is_always_upload_mode(state.image_diff_mode());
+    let (image_id, id_cache_hit_raw) =
+        state.ensure_kitty_image_id(current_index, prepared.payload_hash);
+    let id_cache_hit = !always_upload && id_cache_hit_raw;
     let sidebar_entries = state
         .sidebar_tree
         .render_entries(image_files.get(current_index));
 
-    if state.image_cache().enabled() {
+    let is_raw_rgba_payload = prepared
+        .prepared_upload_payload
+        .as_ref()
+        .is_some_and(|payload| payload.pixel_format == UploadPixelFormat::Rgba);
+
+    if state.image_cache().enabled() && !is_raw_rgba_payload {
         state
             .image_cache_mut()
             .insert(current_index, prepared.image_data.clone());
@@ -163,6 +182,8 @@ pub(super) fn render_prepared_mode(
             transport_mode: prepared.transport_mode,
             diff_mode: state.image_diff_mode(),
             image_dimensions: prepared.image_dimensions,
+            image_id,
+            id_cache_hit,
             source_dimensions: prepared.source_dimensions,
             payload_hash: prepared.payload_hash,
             image_data: prepared.image_data,
@@ -235,6 +256,8 @@ pub(super) fn render_pending_mode(
             transport_mode: state.transport_mode(),
             diff_mode: state.image_diff_mode(),
             image_dimensions: (0, 0),
+            image_id: 0,
+            id_cache_hit: false,
             source_dimensions: (0, 0),
             payload_hash: 0,
             image_data: Arc::<[u8]>::from([]),

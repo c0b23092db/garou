@@ -33,11 +33,14 @@ use self::{
 };
 
 pub use protocol::send_delete;
+#[allow(unused_imports)]
 pub use transport::{
-    ResolvedTransport, UploadPayload, prepare_upload_payload_offthread, resolve_transport_mode,
+    ResolvedTransport, UploadPayload, UploadPixelFormat, prepare_upload_payload_offthread,
+    resolve_transport_mode,
 };
 
 /// 画像の内容からハッシュ値を計算する。
+#[allow(dead_code)]
 pub(in crate::tui) fn hash_image_payload(image_data: &[u8], diff_mode: ImageDiffMode) -> u64 {
     let mut hasher = DefaultHasher::new();
     match diff_mode {
@@ -77,16 +80,17 @@ pub fn render_image(
     let mut dirty_tiles: Option<usize> = None;
 
     if params.refresh_image {
-        send_delete(stdout)?;
+        if let Some(active_id) = state.active_image_id {
+            send_delete(stdout, active_id)?;
+        }
         state.has_uploaded = false;
         state.last_payload_hash = None;
         state.last_placement = None;
         state.last_rgba_frame = None;
+        state.active_image_id = None;
     }
 
-    let should_upload_payload = params.always_upload
-        || !state.has_uploaded
-        || state.last_payload_hash != Some(params.payload_hash);
+    let should_upload_payload = params.always_upload || !params.id_cache_hit || params.refresh_image;
 
     let placement = compute_placement(
         params.term_width,
@@ -106,6 +110,7 @@ pub fn render_image(
         let mut patched = false;
         if !matches!(params.diff_mode, ImageDiffMode::All)
             && state.has_uploaded
+            && state.active_image_id == Some(params.image_id)
             && !params.refresh_image
             && let (Some(prev), Some(next)) =
                 (state.last_rgba_frame.as_ref(), params.rgba_frame.clone())
@@ -131,6 +136,7 @@ pub fn render_image(
                         let patch_payload = general_purpose::STANDARD.encode(patch_bytes);
                         send_patch_rgba(
                             stdout,
+                            params.image_id,
                             rect.x,
                             rect.y,
                             rect.width,
@@ -164,7 +170,7 @@ pub fn render_image(
                     &mut state.shared_memory,
                 )
             };
-            send_upload(stdout, placement, &upload_payload)?;
+            send_upload(stdout, placement, params.image_id, &upload_payload)?;
             stdout.flush()?;
             upload_completed = true;
         }
@@ -172,14 +178,17 @@ pub fn render_image(
         state.has_uploaded = true;
         state.last_payload_hash = Some(params.payload_hash);
         state.last_placement = Some(placement);
-    } else if state.last_placement != Some(placement) {
-        send_place(stdout, placement)?;
+        state.active_image_id = Some(params.image_id);
+    } else if state.last_placement != Some(placement) || state.active_image_id != Some(params.image_id) {
+        send_place(stdout, placement, params.image_id)?;
         state.last_placement = Some(placement);
+        state.active_image_id = Some(params.image_id);
     }
 
     if upload_completed && state.last_placement != Some(placement) {
-        send_place(stdout, placement)?;
+        send_place(stdout, placement, params.image_id)?;
         state.last_placement = Some(placement);
+        state.active_image_id = Some(params.image_id);
     }
 
     queue!(stdout, RestorePosition)?;

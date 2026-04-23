@@ -119,6 +119,8 @@ fn viewer_loop(
             image_cache: ImageCache::new(options.cache_lru_size, options.cache_max_bytes),
             image_dimensions_cache: std::collections::HashMap::new(),
             payload_hash_cache: std::collections::HashMap::new(),
+            kitty_id_cache: std::collections::HashMap::new(),
+            next_kitty_id: 1,
         },
         preview: PreviewState {
             prefetch_size: options.prefetch_size,

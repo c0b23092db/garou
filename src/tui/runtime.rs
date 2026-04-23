@@ -4,12 +4,9 @@ use std::{
     sync::Arc,
 };
 
-use super::render::image::RgbaFrame;
-
 #[derive(Debug, Default)]
 struct CachedImage {
     bytes: Arc<[u8]>,
-    rgba: Option<RgbaFrame>,
 }
 
 /// 画像キャッシュを管理する構造体と、その関連関数
@@ -50,31 +47,13 @@ impl ImageCache {
         value
     }
 
-    pub(super) fn get_rgba(&mut self, key: usize) -> Option<RgbaFrame> {
-        let value = self.map.get(&key).and_then(|entry| entry.rgba.clone());
-        if value.is_some() {
-            self.touch(key);
-        }
-        value
-    }
-
-    pub(super) fn insert_rgba(&mut self, key: usize, rgba: RgbaFrame) {
-        if let Some(entry) = self.map.get_mut(&key) {
-            entry.rgba = Some(rgba);
-            self.touch(key);
-        }
-    }
-
     pub(super) fn insert(&mut self, key: usize, value: Arc<[u8]>) {
         if !self.enabled() {
             return;
         }
 
         let new_bytes = value.len();
-        let cached = CachedImage {
-            bytes: value,
-            rgba: None,
-        };
+        let cached = CachedImage { bytes: value };
 
         match self.map.entry(key) {
             Entry::Occupied(mut entry) => {

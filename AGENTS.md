@@ -100,7 +100,7 @@ src/
 - Project overview: @./README.md
 - 5W1H: @./README/5W1H.md
 - 要件: @./README/要件.md
-- v1.0.0 Roadmap: @./REFACTORING_ROADMAP.md
+- v1.0.0 Roadmap: @./agent/リファクタリング/REFACTORING_ROADMAP.md
 - Project management: @./agents/projectmanagement.md
 - Commands policy: @./agents/tools.md
 - Rust skill: @./agents/Rust.md

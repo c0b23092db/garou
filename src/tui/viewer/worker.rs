@@ -15,6 +15,7 @@ pub(super) struct PreviewRequest {
     pub image_filter_type: ImageFilterType,
     pub image_width_limit: u32,
     pub image_height_limit: u32,
+    pub allow_rgba_decode: bool,
 }
 
 #[derive(Debug)]
@@ -54,6 +55,7 @@ pub(super) fn submit_preview_request(
                 image_filter_type: state.image_filter_type(),
                 image_width_limit: state.image_width_limit(),
                 image_height_limit: state.image_height_limit(),
+                allow_rgba_decode: state.image_render_state.active_image_id().is_some() && !force,
             })
             .is_err()
         {
@@ -88,6 +90,7 @@ pub(super) fn spawn_preview_worker() -> (
                 request.image_filter_type,
                 request.image_width_limit,
                 request.image_height_limit,
+                request.allow_rgba_decode,
             )
             .map_err(|e| e.to_string());
             if resp_tx

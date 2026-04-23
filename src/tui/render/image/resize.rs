@@ -1,3 +1,5 @@
+//! 画像のリサイズ
+
 use crossterm::terminal::size;
 use image::{DynamicImage, GenericImageView, RgbaImage, imageops::FilterType};
 

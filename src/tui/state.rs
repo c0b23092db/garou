@@ -89,6 +89,8 @@ pub(super) struct CacheState {
     pub(super) image_cache: ImageCache,
     pub(super) image_dimensions_cache: HashMap<usize, (u32, u32)>,
     pub(super) payload_hash_cache: HashMap<usize, u64>,
+    pub(super) kitty_id_cache: HashMap<usize, (u32, u64)>,
+    pub(super) next_kitty_id: u32,
 }
 
 /// プレビュー・先読み状態を管理する構造体
@@ -237,6 +239,35 @@ impl ViewerState {
 
     pub(super) fn payload_hash_cache_mut(&mut self) -> &mut HashMap<usize, u64> {
         &mut self.cache.payload_hash_cache
+    }
+
+    pub(super) fn kitty_id_cache_mut(&mut self) -> &mut HashMap<usize, (u32, u64)> {
+        &mut self.cache.kitty_id_cache
+    }
+
+    pub(super) fn cached_kitty_image_id(&self, index: usize, payload_hash: u64) -> Option<u32> {
+        self.cache
+            .kitty_id_cache
+            .get(&index)
+            .and_then(|(id, hash)| (*hash == payload_hash).then_some(*id))
+    }
+
+    pub(super) fn ensure_kitty_image_id(
+        &mut self,
+        index: usize,
+        payload_hash: u64,
+    ) -> (u32, bool) {
+        if let Some(id) = self.cached_kitty_image_id(index, payload_hash) {
+            return (id, true);
+        }
+
+        let mut next = self.cache.next_kitty_id;
+        if next == 0 {
+            next = 1;
+        }
+        self.cache.next_kitty_id = next.wrapping_add(1).max(1);
+        self.cache.kitty_id_cache.insert(index, (next, payload_hash));
+        (next, false)
     }
 
     // ======================

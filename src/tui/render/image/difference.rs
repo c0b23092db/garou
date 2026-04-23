@@ -13,6 +13,7 @@ pub struct DirtyRect {
     pub height: u32,
 }
 
+/// 画像のRGBデータを比較して差分があるかどうかを返す
 fn is_pixel_changed(
     prev_pixels: &[u8],
     next_pixels: &[u8],
