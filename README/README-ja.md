@@ -97,11 +97,12 @@ Options:
 
 ## ⚙️ 設定ファイル
 `~/.config/garou/config.toml`を読み込みます。
+以下のTOMLはデフォルト設定です。
 
 ```toml
 [image]
 extensions = ["png", "jpg", "jpeg", "gif", "webp", "bmp"]
-diff_mode = "Full"
+diff_mode = "All"
 transport_mode = "auto"
 filter_type = "Nearest"
 image_width = 5120
@@ -133,6 +134,8 @@ max_bytes = 268435456 # キャッシュ総容量上限（バイト）
 
 #### 画像表示プロセス（diff_mode）
 - `All`: 差分判定を行わず、毎回画像をリフレッシュする
+
+##### 実験/試験動作（Preview）
 - `Full`: RGB（FFFFFF）のすべての番地を判定して変更がある場合のみ更新する
 - `Half`: RGB（FFFFFF）の0番地、2番地、4番地のみ判定する
 

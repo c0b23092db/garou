@@ -101,7 +101,7 @@ Reads from `~/.config/garou/config.toml`.
 ```toml
 [image]
 extensions = ["png", "jpg", "jpeg", "gif", "webp", "bmp"]
-diff_mode = "Full"
+diff_mode = "All"
 transport_mode = "auto"
 filter_type = "Nearest"
 image_width = 5120
@@ -133,6 +133,8 @@ max_bytes = 268435456 # Cache total size limit (bytes)
 
 #### Image display process (diff_mode)
 - `All`: No differential check, refresh image every time
+
+##### Experimental/Preview behavior
 - `Full`: Check all RGB (FFFFFF) addresses, update only if changes detected
 - `Half`: Check only RGB addresses 0, 2, 4
 

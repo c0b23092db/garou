@@ -45,7 +45,7 @@ pub struct ImageConfig {
 impl Default for ImageConfig {
     fn default() -> Self {
         Self {
-            diff_mode: ImageDiffMode::Full,
+            diff_mode: ImageDiffMode::All,
             transport_mode: TransportMode::Auto,
             dirty_ratio: default_dirty_ratio(),
             tile_grid: default_tile_grid(),
