@@ -5,12 +5,53 @@ use crate::model::config::ImageDiffMode;
 use super::state::RgbaFrame;
 
 /// 差分が存在する最小外接矩形
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DirtyRect {
     pub x: u32,
     pub y: u32,
     pub width: u32,
     pub height: u32,
+}
+
+/// セルの横幅のピクセル数
+const CELL_PIXEL_WIDTH: u32 = 8;
+/// セルの高さのピクセル数
+const CELL_PIXEL_HEIGHT: u32 = 16;
+
+#[inline]
+fn align_down(value: u32, unit: u32) -> u32 {
+    (value / unit) * unit
+}
+
+/// 2つのRGBAフレームを比較して、差分が存在する最小外接矩形を返す
+#[inline]
+fn align_up(value: u32, unit: u32) -> u32 {
+    value.saturating_add(unit.saturating_sub(1)) / unit * unit
+}
+
+/// 与えられた矩形をセルグリッドに合わせて拡大する
+fn align_rect_to_cell_grid(rect: DirtyRect, frame_width: u32, frame_height: u32) -> DirtyRect {
+    let mut start_x = rect.x;
+    let mut end_x = rect.x.saturating_add(rect.width).min(frame_width);
+    let mut start_y = rect.y;
+    let mut end_y = rect.y.saturating_add(rect.height).min(frame_height);
+
+    if frame_width > CELL_PIXEL_WIDTH {
+        start_x = align_down(start_x, CELL_PIXEL_WIDTH);
+        end_x = align_up(end_x, CELL_PIXEL_WIDTH).min(frame_width);
+    }
+
+    if frame_height > CELL_PIXEL_HEIGHT {
+        start_y = align_down(start_y, CELL_PIXEL_HEIGHT);
+        end_y = align_up(end_y, CELL_PIXEL_HEIGHT).min(frame_height);
+    }
+
+    DirtyRect {
+        x: start_x,
+        y: start_y,
+        width: end_x.saturating_sub(start_x).max(1),
+        height: end_y.saturating_sub(start_y).max(1),
+    }
 }
 
 #[inline]
@@ -155,12 +196,19 @@ pub fn find_dirty_tiles(
             }
 
             if changed {
-                dirty_tiles.push(DirtyRect {
-                    x: tile_x as u32,
-                    y: tile_y as u32,
-                    width: rect_w as u32,
-                    height: rect_h as u32,
-                });
+                let rect = align_rect_to_cell_grid(
+                    DirtyRect {
+                        x: tile_x as u32,
+                        y: tile_y as u32,
+                        width: rect_w as u32,
+                        height: rect_h as u32,
+                    },
+                    next.width,
+                    next.height,
+                );
+                if !dirty_tiles.contains(&rect) {
+                    dirty_tiles.push(rect);
+                }
             }
         }
     }
@@ -285,5 +333,27 @@ mod tests {
         assert_eq!(dirty_rect.y, 0);
         assert_eq!(dirty_rect.width, 0);
         assert_eq!(dirty_rect.height, 0);
+    }
+
+    #[test]
+    fn find_dirty_tiles_aligns_rect_to_cell_grid() {
+        let prev_pixels = vec![0u8; 32 * 32 * 4];
+        let mut next_pixels = prev_pixels.clone();
+
+        let px = 17usize;
+        let py = 20usize;
+        let idx = (py * 32 + px) * 4;
+        next_pixels[idx] = 1;
+
+        let prev = rgba_frame(32, 32, &prev_pixels);
+        let next = rgba_frame(32, 32, &next_pixels);
+
+        let dirty_tiles = find_dirty_tiles(&prev, &next, ImageDiffMode::Full, 10, 1).unwrap();
+
+        assert_eq!(dirty_tiles.len(), 1);
+        assert_eq!(dirty_tiles[0].x, 8);
+        assert_eq!(dirty_tiles[0].y, 16);
+        assert_eq!(dirty_tiles[0].width, 16);
+        assert_eq!(dirty_tiles[0].height, 16);
     }
 }
