@@ -56,6 +56,8 @@ pub struct ImageRenderState {
     pub(super) has_uploaded: bool,
     /// 最後にアップロードした画像の内容のハッシュ値
     pub(super) last_payload_hash: Option<u64>,
+    /// 最後にアップロードした encoded payload のハッシュ値
+    pub(super) last_encoded_payload_hash: Option<u64>,
     /// 最後に配置した画像の位置とサイズ (start_x, start_y, display_width_cells, display_height_cells)
     pub(super) last_placement: Option<(u16, u16, u32, u32)>,
     /// 最後にアップロード済みの RGBA フレーム（差分更新用）
@@ -82,6 +84,7 @@ impl ImageRenderState {
     pub(crate) fn reset_upload_state(&mut self) {
         self.has_uploaded = false;
         self.last_payload_hash = None;
+        self.last_encoded_payload_hash = None;
         self.last_placement = None;
         self.last_rgba_frame = None;
         self.active_image_id = None;

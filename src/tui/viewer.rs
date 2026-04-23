@@ -99,6 +99,7 @@ fn viewer_loop(
         u64,
         super::image_pipeline::PreparedImagePayload,
     )> = None;
+    let mut pending_preview_force_refresh = false;
     let mut pending_preview_started_at: Option<Instant> = None;
     let mut pending_loading_rendered = false;
     let mut state = ViewerState {
@@ -119,6 +120,7 @@ fn viewer_loop(
             image_cache: ImageCache::new(options.cache_lru_size, options.cache_max_bytes),
             image_dimensions_cache: std::collections::HashMap::new(),
             payload_hash_cache: std::collections::HashMap::new(),
+            rgba_frame_cache: std::collections::HashMap::new(),
             kitty_id_cache: std::collections::HashMap::new(),
             next_kitty_id: 1,
         },
@@ -163,6 +165,7 @@ fn viewer_loop(
     ) {
         pending_preview_started_at = Some(Instant::now());
         pending_loading_rendered = false;
+        pending_preview_force_refresh = false;
         render_pending_mode(
             stdout,
             &image_files,
@@ -193,6 +196,7 @@ fn viewer_loop(
                     redraw_mode = RedrawMode::ImageReplace;
                 }
                 Err(error) if response.index == *current_index => {
+                    pending_preview_force_refresh = false;
                     render_pending_mode(
                         stdout,
                         &image_files,
@@ -287,6 +291,7 @@ fn viewer_loop(
                 ) {
                     pending_preview_started_at = Some(Instant::now());
                     pending_loading_rendered = false;
+                    pending_preview_force_refresh = true;
                     render_pending_mode(
                         stdout,
                         &image_files,
@@ -328,6 +333,7 @@ fn viewer_loop(
                 ) {
                     pending_preview_started_at = Some(Instant::now());
                     pending_loading_rendered = false;
+                    pending_preview_force_refresh = true;
                     render_pending_mode(
                         stdout,
                         &image_files,
@@ -369,6 +375,7 @@ fn viewer_loop(
                 ) {
                     pending_preview_started_at = Some(Instant::now());
                     pending_loading_rendered = false;
+                    pending_preview_force_refresh = true;
                     render_pending_mode(
                         stdout,
                         &image_files,
@@ -412,12 +419,13 @@ fn viewer_loop(
                         &mut state,
                         payload,
                         RenderModeFlags {
-                            refresh_image: false,
+                            refresh_image: pending_preview_force_refresh,
                             full_refresh: false,
                             prefetch_after: false,
                         },
                     )?;
                 }
+                pending_preview_force_refresh = false;
                 redraw_mode = RedrawMode::Idle;
             }
         }

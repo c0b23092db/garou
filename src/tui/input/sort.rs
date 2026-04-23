@@ -49,6 +49,7 @@ pub(super) fn apply_sort(ctx: SortContext<'_>, new_field: SortField, new_descend
     state.image_cache_mut().clear();
     state.image_dimensions_cache_mut().clear();
     state.payload_hash_cache_mut().clear();
+    state.rgba_frame_cache_mut().clear();
     state.kitty_id_cache_mut().clear();
 
     clear_pending_replace(state);

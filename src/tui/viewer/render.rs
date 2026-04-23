@@ -155,6 +155,13 @@ pub(super) fn render_prepared_mode(
     state
         .payload_hash_cache_mut()
         .insert(current_index, prepared.payload_hash);
+    if state.image_cache().enabled()
+        && let Some(rgba_frame) = prepared.rgba_frame.clone()
+    {
+        state
+            .rgba_frame_cache_mut()
+            .insert(current_index, rgba_frame);
+    }
 
     let frame_metrics = render_frame(
         stdout,

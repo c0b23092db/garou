@@ -69,6 +69,12 @@ pub(in crate::tui) fn decode_rgba_payload(image_data: &[u8]) -> Option<RgbaFrame
     difference::decode_rgba_frame(image_data)
 }
 
+fn hash_encoded_payload(encoded_payload: &str) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    encoded_payload.hash(&mut hasher);
+    hasher.finish()
+}
+
 /// 画像をターミナルに描画する。
 pub fn render_image(
     stdout: &mut io::Stdout,
@@ -85,13 +91,25 @@ pub fn render_image(
         }
         state.has_uploaded = false;
         state.last_payload_hash = None;
+        state.last_encoded_payload_hash = None;
         state.last_placement = None;
         state.last_rgba_frame = None;
         state.active_image_id = None;
     }
 
-    let should_upload_payload =
+    let encoded_payload_hash = hash_encoded_payload(params.encoded_payload.as_ref());
+    let same_payload_as_last = !params.refresh_image
+        && !params.always_upload
+        && state.has_uploaded
+        && state.active_image_id == Some(params.image_id)
+        && state.last_payload_hash == Some(params.payload_hash)
+        && state.last_encoded_payload_hash == Some(encoded_payload_hash);
+
+    let mut should_upload_payload =
         params.always_upload || !params.id_cache_hit || params.refresh_image;
+    if same_payload_as_last {
+        should_upload_payload = false;
+    }
 
     let placement = compute_placement(
         params.term_width,
@@ -178,6 +196,7 @@ pub fn render_image(
 
         state.has_uploaded = true;
         state.last_payload_hash = Some(params.payload_hash);
+        state.last_encoded_payload_hash = Some(encoded_payload_hash);
         state.last_placement = Some(placement);
         state.active_image_id = Some(params.image_id);
     } else if state.last_placement != Some(placement)

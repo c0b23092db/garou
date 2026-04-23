@@ -352,11 +352,21 @@ pub(super) fn load_encoded_payload(image_data: &[u8]) -> Arc<str> {
 
 /// RGBAフレームを取得する関数。キャッシュがあればキャッシュを優先する。
 pub(super) fn load_rgba_frame(
-    _index: usize,
+    index: usize,
     image_data: &[u8],
-    _state: &mut ViewerState,
+    state: &mut ViewerState,
 ) -> Option<RgbaFrame> {
-    render_image::decode_rgba_payload(image_data)
+    if state.image_cache().enabled()
+        && let Some(cached) = state.rgba_frame_cache().get(&index)
+    {
+        return Some(cached.clone());
+    }
+
+    let decoded = render_image::decode_rgba_payload(image_data)?;
+    if state.image_cache().enabled() {
+        state.rgba_frame_cache_mut().insert(index, decoded.clone());
+    }
+    Some(decoded)
 }
 
 /// 隣接画像を先読みする関数

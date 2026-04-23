@@ -13,25 +13,32 @@ pub struct DirtyRect {
     pub height: u32,
 }
 
-/// 画像のRGBデータを比較して差分があるかどうかを返す
+#[inline]
+fn pixel_u32(bytes: &[u8], idx: usize) -> u32 {
+    u32::from_ne_bytes([bytes[idx], bytes[idx + 1], bytes[idx + 2], bytes[idx + 3]])
+}
+
+/// 画像のRGBAチャンクを比較して差分があるかどうかを返す
 fn is_pixel_changed(
     prev_pixels: &[u8],
     next_pixels: &[u8],
     idx: usize,
     diff_mode: ImageDiffMode,
 ) -> bool {
+    let prev_pixel = pixel_u32(prev_pixels, idx);
+    let next_pixel = pixel_u32(next_pixels, idx);
+
+    #[cfg(target_endian = "little")]
+    const RGB_MASK: u32 = 0x00FF_FFFF;
+    #[cfg(target_endian = "big")]
+    const RGB_MASK: u32 = 0xFFFF_FF00;
+
     match diff_mode {
         ImageDiffMode::All => false,
-        // Full: RGB の全番地を比較する（A は判定に使わない）
-        ImageDiffMode::Full => {
-            prev_pixels[idx] != next_pixels[idx]
-                || prev_pixels[idx + 1] != next_pixels[idx + 1]
-                || prev_pixels[idx + 2] != next_pixels[idx + 2]
-        }
+        // Full: RGBA を 4 バイト単位で読み、A を除いた RGB だけを比較する
+        ImageDiffMode::Full => (prev_pixel ^ next_pixel) & RGB_MASK != 0,
         // Half: RGB の 0,2,4... 相当になるよう R/B を比較する
-        ImageDiffMode::Half => {
-            prev_pixels[idx] != next_pixels[idx] || prev_pixels[idx + 2] != next_pixels[idx + 2]
-        }
+        ImageDiffMode::Half => (prev_pixel ^ next_pixel) & (RGB_MASK & 0x00FF_00FF) != 0,
     }
 }
 
@@ -72,8 +79,9 @@ pub fn find_dirty_rect(
     let mut max_y = 0usize;
     let mut any_changed = false;
 
+    let row_bytes = width * 4;
     for y in 0..height {
-        let row_base = y * width * 4;
+        let row_base = y * row_bytes;
         for x in 0..width {
             let idx = row_base + x * 4;
             if is_pixel_changed(prev_pixels, next_pixels, idx, diff_mode) {
@@ -127,6 +135,7 @@ pub fn find_dirty_tiles(
     let next_pixels = next.pixels.as_ref();
 
     let mut dirty_tiles = Vec::new();
+    let row_bytes = width * 4;
 
     for tile_y in (0..height).step_by(tile) {
         let rect_h = (height - tile_y).min(tile);
@@ -135,7 +144,7 @@ pub fn find_dirty_tiles(
 
             let mut changed = false;
             'scan: for y in (tile_y..(tile_y + rect_h)).step_by(sample_step) {
-                let row_base = y * width * 4;
+                let row_base = y * row_bytes;
                 for x in (tile_x..(tile_x + rect_w)).step_by(sample_step) {
                     let idx = row_base + x * 4;
                     if is_pixel_changed(prev_pixels, next_pixels, idx, diff_mode) {
@@ -263,5 +272,18 @@ mod tests {
         assert_eq!(dirty_tiles[0].y, 2);
         assert_eq!(dirty_tiles[0].width, 2);
         assert_eq!(dirty_tiles[0].height, 2);
+    }
+
+    #[test]
+    fn find_dirty_rect_ignores_alpha_changes_in_full_mode() {
+        let prev = rgba_frame(1, 1, &[10, 20, 30, 40]);
+        let next = rgba_frame(1, 1, &[10, 20, 30, 250]);
+
+        let dirty_rect = find_dirty_rect(&prev, &next, ImageDiffMode::Full).unwrap();
+
+        assert_eq!(dirty_rect.x, 0);
+        assert_eq!(dirty_rect.y, 0);
+        assert_eq!(dirty_rect.width, 0);
+        assert_eq!(dirty_rect.height, 0);
     }
 }

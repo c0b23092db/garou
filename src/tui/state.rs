@@ -89,6 +89,7 @@ pub(super) struct CacheState {
     pub(super) image_cache: ImageCache,
     pub(super) image_dimensions_cache: HashMap<usize, (u32, u32)>,
     pub(super) payload_hash_cache: HashMap<usize, u64>,
+    pub(super) rgba_frame_cache: HashMap<usize, super::render::image::RgbaFrame>,
     pub(super) kitty_id_cache: HashMap<usize, (u32, u64)>,
     pub(super) next_kitty_id: u32,
 }
@@ -239,6 +240,16 @@ impl ViewerState {
 
     pub(super) fn payload_hash_cache_mut(&mut self) -> &mut HashMap<usize, u64> {
         &mut self.cache.payload_hash_cache
+    }
+
+    pub(super) fn rgba_frame_cache(&self) -> &HashMap<usize, super::render::image::RgbaFrame> {
+        &self.cache.rgba_frame_cache
+    }
+
+    pub(super) fn rgba_frame_cache_mut(
+        &mut self,
+    ) -> &mut HashMap<usize, super::render::image::RgbaFrame> {
+        &mut self.cache.rgba_frame_cache
     }
 
     pub(super) fn kitty_id_cache_mut(&mut self) -> &mut HashMap<usize, (u32, u64)> {
