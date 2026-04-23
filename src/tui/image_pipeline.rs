@@ -3,17 +3,17 @@ use base64::{Engine as _, engine::general_purpose};
 use crossterm::terminal::size as terminal_size;
 use image::{DynamicImage, GenericImageView, ImageFormat, imageops::FilterType};
 use std::{
+    hash::{Hash, Hasher},
     io::Cursor,
     path::{Path, PathBuf},
-    hash::{Hash, Hasher},
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use super::{
     render::image::{
-        self as render_image, RgbaFrame, UploadPayload, prepare_upload_payload_offthread,
-        UploadPixelFormat,
+        self as render_image, RgbaFrame, UploadPayload, UploadPixelFormat,
+        prepare_upload_payload_offthread,
     },
     state::{NavDirection, ViewerState},
 };
@@ -41,10 +41,6 @@ fn terminal_pixel_limit() -> (u32, u32) {
         / DPI_SCALE_DEN;
 
     (max_w.max(1), max_h.max(1))
-}
-
-fn should_resize_for_terminal(source_dims: (u32, u32), max_w: u32, max_h: u32) -> bool {
-    source_dims.0 > max_w || source_dims.1 > max_h
 }
 
 fn resize_for_terminal(
@@ -201,30 +197,34 @@ pub(super) fn prepare_image_payload(
         file_width_limit,
         file_height_limit,
     );
-    let needs_resize = should_resize_for_terminal(source_dims, max_w, max_h);
     let resize_filter = image_filter_type.as_filter_type();
 
     let bytes = std::fs::read(image_path)?;
 
-    let (image_data, image_dimensions, rgba_frame, is_raw_rgba_direct): (Arc<[u8]>, (u32, u32), Option<RgbaFrame>, bool) =
-        if needs_resize {
-            let decoded = ::image::load_from_memory(&bytes)?;
-            let resized = resize_for_terminal(decoded, max_w, max_h, resize_filter);
-            let resized_dims = resized.dimensions();
+    let (image_data, image_dimensions, rgba_frame, is_raw_rgba_direct): (
+        Arc<[u8]>,
+        (u32, u32),
+        Option<RgbaFrame>,
+        bool,
+    ) = if source_dims.0 > max_w || source_dims.1 > max_h {
+        let decoded = ::image::load_from_memory(&bytes)?;
+        let resized = resize_for_terminal(decoded, max_w, max_h, resize_filter);
+        let resized_dims = resized.dimensions();
 
-            let rgba_upload_bytes = usize::try_from(
-                u64::from(resized_dims.0)
-                    .saturating_mul(u64::from(resized_dims.1))
-                    .saturating_mul(4),
-            )
-            .unwrap_or(usize::MAX);
+        let rgba_upload_bytes = usize::try_from(
+            u64::from(resized_dims.0)
+                .saturating_mul(u64::from(resized_dims.1))
+                .saturating_mul(4),
+        )
+        .unwrap_or(usize::MAX);
 
-            if transport_mode == TransportMode::Direct
-                && rgba_upload_bytes <= MAX_DIRECT_RGBA_UPLOAD_BYTES
-            {
-                let rgba = resized.to_rgba8();
-                let raw = Arc::<[u8]>::from(rgba.into_raw());
-                let rgba_frame = if allow_rgba_decode && should_decode_rgba_frame(resized_dims, diff_mode) {
+        if transport_mode == TransportMode::Direct
+            && rgba_upload_bytes <= MAX_DIRECT_RGBA_UPLOAD_BYTES
+        {
+            let rgba = resized.to_rgba8();
+            let raw = Arc::<[u8]>::from(rgba.into_raw());
+            let rgba_frame =
+                if allow_rgba_decode && should_decode_rgba_frame(resized_dims, diff_mode) {
                     Some(RgbaFrame {
                         width: resized_dims.0,
                         height: resized_dims.1,
@@ -233,16 +233,17 @@ pub(super) fn prepare_image_payload(
                 } else {
                     None
                 };
-                (raw, resized_dims, rgba_frame, true)
-            } else {
-                // file/temp/shared は互換性維持のため PNG ペイロードを継続利用する
-                let mut png_bytes = Vec::new();
-                {
-                    let mut cursor = Cursor::new(&mut png_bytes);
-                    resized.write_to(&mut cursor, ImageFormat::Png)?;
-                }
+            (raw, resized_dims, rgba_frame, true)
+        } else {
+            // file/temp/shared は互換性維持のため PNG ペイロードを継続利用する
+            let mut png_bytes = Vec::new();
+            {
+                let mut cursor = Cursor::new(&mut png_bytes);
+                resized.write_to(&mut cursor, ImageFormat::Png)?;
+            }
 
-                let rgba_frame = if allow_rgba_decode && should_decode_rgba_frame(resized_dims, diff_mode) {
+            let rgba_frame =
+                if allow_rgba_decode && should_decode_rgba_frame(resized_dims, diff_mode) {
                     let rgba = resized.to_rgba8();
                     Some(RgbaFrame {
                         width: resized_dims.0,
@@ -253,17 +254,17 @@ pub(super) fn prepare_image_payload(
                     None
                 };
 
-                (Arc::from(png_bytes), resized_dims, rgba_frame, false)
-            }
+            (Arc::from(png_bytes), resized_dims, rgba_frame, false)
+        }
+    } else {
+        let image_data: Arc<[u8]> = Arc::from(bytes.clone());
+        let rgba_frame = if allow_rgba_decode && should_decode_rgba_frame(source_dims, diff_mode) {
+            render_image::decode_rgba_payload(&bytes)
         } else {
-            let image_data: Arc<[u8]> = Arc::from(bytes.clone());
-            let rgba_frame = if allow_rgba_decode && should_decode_rgba_frame(source_dims, diff_mode) {
-                render_image::decode_rgba_payload(&bytes)
-            } else {
-                None
-            };
-            (image_data, source_dims, rgba_frame, false)
+            None
         };
+        (image_data, source_dims, rgba_frame, false)
+    };
 
     let encoded_payload = Arc::<str>::from(general_purpose::STANDARD.encode(image_data.as_ref()));
     let requested_transport = render_image::resolve_transport_mode(transport_mode);

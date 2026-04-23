@@ -31,6 +31,7 @@ use self::{
     statusbar::{StatusbarContent, render_statusbar},
 };
 
+/// 画面全体の描画を管理するモジュール
 #[derive(Debug, Clone, Copy)]
 pub struct FrameRenderMetrics {
     pub render_duration: Duration,

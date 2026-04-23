@@ -42,7 +42,10 @@ pub fn send_upload(
                 write!(
                     stdout,
                     "\x1b_Ga=T,f=100,t=d,C=1,c={},r={},i={};{}\x1b\\",
-                    display_width_cells, display_height_cells, KITTY_IMAGE_ID, upload_payload.payload
+                    display_width_cells,
+                    display_height_cells,
+                    KITTY_IMAGE_ID,
+                    upload_payload.payload
                 )?;
             }
         }

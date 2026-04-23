@@ -176,3 +176,92 @@ pub fn dirty_ratio_from_area(frame: &RgbaFrame, dirty_area: u32) -> f32 {
     let full_area = frame.width.saturating_mul(frame.height).max(1);
     dirty_area as f32 / full_area as f32
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn rgba_frame(width: u32, height: u32, pixels: &[u8]) -> RgbaFrame {
+        assert_eq!(pixels.len(), (width * height * 4) as usize);
+
+        RgbaFrame {
+            width,
+            height,
+            pixels: Arc::from(pixels.to_vec()),
+        }
+    }
+
+    #[test]
+    fn find_dirty_rect_returns_zero_rect_when_frames_match() {
+        let frame = rgba_frame(
+            2,
+            2,
+            &[
+                0, 0, 0, 255, 10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255,
+            ],
+        );
+
+        let dirty_rect = find_dirty_rect(&frame, &frame, ImageDiffMode::Full).unwrap();
+
+        assert_eq!(dirty_rect.x, 0);
+        assert_eq!(dirty_rect.y, 0);
+        assert_eq!(dirty_rect.width, 0);
+        assert_eq!(dirty_rect.height, 0);
+    }
+
+    #[test]
+    fn find_dirty_rect_detects_single_changed_pixel() {
+        let prev = rgba_frame(
+            2,
+            2,
+            &[
+                0, 0, 0, 255, 10, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255,
+            ],
+        );
+        let next = rgba_frame(
+            2,
+            2,
+            &[
+                0, 0, 0, 255, 11, 20, 30, 255, 40, 50, 60, 255, 70, 80, 90, 255,
+            ],
+        );
+
+        let dirty_rect = find_dirty_rect(&prev, &next, ImageDiffMode::Full).unwrap();
+
+        assert_eq!(dirty_rect.x, 1);
+        assert_eq!(dirty_rect.y, 0);
+        assert_eq!(dirty_rect.width, 1);
+        assert_eq!(dirty_rect.height, 1);
+    }
+
+    #[test]
+    fn find_dirty_tiles_returns_only_changed_tile() {
+        let prev = rgba_frame(
+            4,
+            4,
+            &[
+                0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255,
+                0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255,
+                0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255,
+            ],
+        );
+        let next = rgba_frame(
+            4,
+            4,
+            &[
+                0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255,
+                0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255,
+                0, 0, 0, 255, 0, 0, 0, 255, 0, 0, 0, 255, 1, 0, 0, 255,
+            ],
+        );
+
+        let dirty_tiles = find_dirty_tiles(&prev, &next, ImageDiffMode::Full, 2, 1).unwrap();
+
+        assert_eq!(dirty_tiles.len(), 1);
+        assert_eq!(dirty_tiles[0].x, 2);
+        assert_eq!(dirty_tiles[0].y, 2);
+        assert_eq!(dirty_tiles[0].width, 2);
+        assert_eq!(dirty_tiles[0].height, 2);
+    }
+}

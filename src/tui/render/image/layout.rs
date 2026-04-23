@@ -49,3 +49,22 @@ pub fn compute_placement(
         display_height_cells,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compute_placement_fits_to_available_space() {
+        let placement = compute_placement(120, 40, 3, (400, 200), 1.0, 0, 0);
+
+        assert_eq!(placement, (3, 1, 118, 29));
+    }
+
+    #[test]
+    fn compute_placement_clamps_to_minimum_size() {
+        let placement = compute_placement(1, 0, 0, (100, 100), 0.01, 0, 0);
+
+        assert_eq!(placement, (0, 1, 1, 1));
+    }
+}

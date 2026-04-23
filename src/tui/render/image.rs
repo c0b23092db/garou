@@ -90,7 +90,8 @@ pub fn render_image(
         state.active_image_id = None;
     }
 
-    let should_upload_payload = params.always_upload || !params.id_cache_hit || params.refresh_image;
+    let should_upload_payload =
+        params.always_upload || !params.id_cache_hit || params.refresh_image;
 
     let placement = compute_placement(
         params.term_width,
@@ -179,7 +180,9 @@ pub fn render_image(
         state.last_payload_hash = Some(params.payload_hash);
         state.last_placement = Some(placement);
         state.active_image_id = Some(params.image_id);
-    } else if state.last_placement != Some(placement) || state.active_image_id != Some(params.image_id) {
+    } else if state.last_placement != Some(placement)
+        || state.active_image_id != Some(params.image_id)
+    {
         send_place(stdout, placement, params.image_id)?;
         state.last_placement = Some(placement);
         state.active_image_id = Some(params.image_id);

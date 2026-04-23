@@ -7,8 +7,8 @@ use super::super::image_pipeline::{
     load_image_data, load_image_dimensions, load_payload_hash, load_rgba_frame, prefetch_neighbors,
     should_decode_rgba_frame,
 };
-use super::super::render::{FrameRenderInput, RenderOptions, render_frame};
 use super::super::render::image::UploadPixelFormat;
+use super::super::render::{FrameRenderInput, RenderOptions, render_frame};
 use super::super::state::ViewerState;
 use super::RenderModeFlags;
 

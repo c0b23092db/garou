@@ -252,11 +252,7 @@ impl ViewerState {
             .and_then(|(id, hash)| (*hash == payload_hash).then_some(*id))
     }
 
-    pub(super) fn ensure_kitty_image_id(
-        &mut self,
-        index: usize,
-        payload_hash: u64,
-    ) -> (u32, bool) {
+    pub(super) fn ensure_kitty_image_id(&mut self, index: usize, payload_hash: u64) -> (u32, bool) {
         if let Some(id) = self.cached_kitty_image_id(index, payload_hash) {
             return (id, true);
         }
@@ -266,7 +262,9 @@ impl ViewerState {
             next = 1;
         }
         self.cache.next_kitty_id = next.wrapping_add(1).max(1);
-        self.cache.kitty_id_cache.insert(index, (next, payload_hash));
+        self.cache
+            .kitty_id_cache
+            .insert(index, (next, payload_hash));
         (next, false)
     }
 
