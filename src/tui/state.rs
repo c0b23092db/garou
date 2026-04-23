@@ -85,13 +85,56 @@ pub(super) struct UiState {
 
 /// キャッシュ層を管理する構造体
 #[derive(Debug)]
+pub(super) struct CacheEntry {
+    pub(super) image_dimensions: Option<(u32, u32)>,
+    pub(super) payload_hash: Option<u64>,
+    pub(super) metadata_hash: Option<u64>,
+    pub(super) rgba_frame: Option<super::render::image::RgbaFrame>,
+    pub(super) kitty_id: Option<(u32, u64)>,
+}
+
+/// キャッシュ層を管理する構造体
+#[derive(Debug)]
 pub(super) struct CacheState {
     pub(super) image_cache: ImageCache,
-    pub(super) image_dimensions_cache: HashMap<usize, (u32, u32)>,
-    pub(super) payload_hash_cache: HashMap<usize, u64>,
-    pub(super) rgba_frame_cache: HashMap<usize, super::render::image::RgbaFrame>,
-    pub(super) kitty_id_cache: HashMap<usize, (u32, u64)>,
+    pub(super) entries: HashMap<usize, CacheEntry>,
     pub(super) next_kitty_id: u32,
+}
+
+impl CacheState {
+    pub(super) fn entry(&self, index: usize) -> Option<&CacheEntry> {
+        self.entries.get(&index)
+    }
+
+    pub(super) fn entry_mut(&mut self, index: usize) -> &mut CacheEntry {
+        self.entries.entry(index).or_insert_with(|| CacheEntry {
+            image_dimensions: None,
+            payload_hash: None,
+            metadata_hash: None,
+            rgba_frame: None,
+            kitty_id: None,
+        })
+    }
+
+    pub(super) fn cached_kitty_image_id(&self, index: usize, payload_hash: u64) -> Option<u32> {
+        self.entry(index)
+            .and_then(|entry| entry.kitty_id)
+            .and_then(|(id, hash)| (hash == payload_hash).then_some(id))
+    }
+
+    pub(super) fn ensure_kitty_image_id(&mut self, index: usize, payload_hash: u64) -> (u32, bool) {
+        if let Some(id) = self.cached_kitty_image_id(index, payload_hash) {
+            return (id, true);
+        }
+
+        let mut next = self.next_kitty_id;
+        if next == 0 {
+            next = 1;
+        }
+        self.next_kitty_id = next.wrapping_add(1).max(1);
+        self.entry_mut(index).kitty_id = Some((next, payload_hash));
+        (next, false)
+    }
 }
 
 /// プレビュー・先読み状態を管理する構造体
@@ -157,257 +200,4 @@ pub(super) struct ViewerState {
     pub(super) sidebar_tree: SidebarTree,
     pub(super) image_render_state: ImageRenderState,
     pub(super) last_nav_direction: NavDirection,
-}
-
-impl ViewerState {
-    // ======================
-    // UI State Accessors
-    // ======================
-    pub(super) fn sidebar_visible(&self) -> bool {
-        self.ui_state.sidebar_visible
-    }
-
-    pub(super) fn set_sidebar_visible(&mut self, visible: bool) {
-        self.ui_state.sidebar_visible = visible;
-    }
-
-    pub(super) fn header_visible(&self) -> bool {
-        self.ui_state.header_visible
-    }
-
-    pub(super) fn set_header_visible(&mut self, visible: bool) {
-        self.ui_state.header_visible = visible;
-    }
-
-    pub(super) fn statusbar_visible(&self) -> bool {
-        self.ui_state.statusbar_visible
-    }
-
-    pub(super) fn set_statusbar_visible(&mut self, visible: bool) {
-        self.ui_state.statusbar_visible = visible;
-    }
-
-    pub(super) fn overlay_visible(&self) -> bool {
-        self.ui_state.overlay_visible
-    }
-
-    pub(super) fn set_overlay_visible(&mut self, visible: bool) {
-        self.ui_state.overlay_visible = visible;
-    }
-
-    pub(super) fn sidebar_size(&self) -> u16 {
-        self.ui_state.sidebar_size
-    }
-
-    pub(super) fn header_bg_color(&self) -> Color {
-        self.ui_state.header_bg_color
-    }
-
-    pub(super) fn header_fg_color(&self) -> Color {
-        self.ui_state.header_fg_color
-    }
-
-    pub(super) fn statusbar_bg_color(&self) -> Color {
-        self.ui_state.statusbar_bg_color
-    }
-
-    pub(super) fn statusbar_fg_color(&self) -> Color {
-        self.ui_state.statusbar_fg_color
-    }
-
-    // ======================
-    // Cache Accessors
-    // ======================
-    pub(super) fn image_cache(&self) -> &ImageCache {
-        &self.cache.image_cache
-    }
-
-    pub(super) fn image_cache_mut(&mut self) -> &mut ImageCache {
-        &mut self.cache.image_cache
-    }
-
-    pub(super) fn image_dimensions_cache(&self) -> &HashMap<usize, (u32, u32)> {
-        &self.cache.image_dimensions_cache
-    }
-
-    pub(super) fn image_dimensions_cache_mut(&mut self) -> &mut HashMap<usize, (u32, u32)> {
-        &mut self.cache.image_dimensions_cache
-    }
-
-    pub(super) fn payload_hash_cache(&self) -> &HashMap<usize, u64> {
-        &self.cache.payload_hash_cache
-    }
-
-    pub(super) fn payload_hash_cache_mut(&mut self) -> &mut HashMap<usize, u64> {
-        &mut self.cache.payload_hash_cache
-    }
-
-    pub(super) fn rgba_frame_cache(&self) -> &HashMap<usize, super::render::image::RgbaFrame> {
-        &self.cache.rgba_frame_cache
-    }
-
-    pub(super) fn rgba_frame_cache_mut(
-        &mut self,
-    ) -> &mut HashMap<usize, super::render::image::RgbaFrame> {
-        &mut self.cache.rgba_frame_cache
-    }
-
-    pub(super) fn kitty_id_cache_mut(&mut self) -> &mut HashMap<usize, (u32, u64)> {
-        &mut self.cache.kitty_id_cache
-    }
-
-    pub(super) fn cached_kitty_image_id(&self, index: usize, payload_hash: u64) -> Option<u32> {
-        self.cache
-            .kitty_id_cache
-            .get(&index)
-            .and_then(|(id, hash)| (*hash == payload_hash).then_some(*id))
-    }
-
-    pub(super) fn ensure_kitty_image_id(&mut self, index: usize, payload_hash: u64) -> (u32, bool) {
-        if let Some(id) = self.cached_kitty_image_id(index, payload_hash) {
-            return (id, true);
-        }
-
-        let mut next = self.cache.next_kitty_id;
-        if next == 0 {
-            next = 1;
-        }
-        self.cache.next_kitty_id = next.wrapping_add(1).max(1);
-        self.cache
-            .kitty_id_cache
-            .insert(index, (next, payload_hash));
-        (next, false)
-    }
-
-    // ======================
-    // Preview Accessors
-    // ======================
-    pub(super) fn prefetch_size(&self) -> usize {
-        self.preview.prefetch_size
-    }
-
-    pub(super) fn last_prefetch_state(&self) -> Option<(usize, NavDirection, usize)> {
-        self.preview.last_prefetch_state
-    }
-
-    pub(super) fn set_last_prefetch_state(&mut self, state: Option<(usize, NavDirection, usize)>) {
-        self.preview.last_prefetch_state = state;
-    }
-
-    pub(super) fn preview_generation(&self) -> u64 {
-        self.preview.preview_generation
-    }
-
-    pub(super) fn increment_preview_generation(&mut self) -> u64 {
-        self.preview.preview_generation += 1;
-        self.preview.preview_generation
-    }
-
-    pub(super) fn expected_preview_generation(&self) -> Option<(usize, u64)> {
-        self.preview.expected_preview_generation
-    }
-
-    pub(super) fn set_expected_preview_generation(&mut self, generation: Option<(usize, u64)>) {
-        self.preview.expected_preview_generation = generation;
-    }
-
-    pub(super) fn last_idle_prefetch_at(&self) -> Option<Instant> {
-        self.preview.last_idle_prefetch_at
-    }
-
-    pub(super) fn set_last_idle_prefetch_at(&mut self, at: Option<Instant>) {
-        self.preview.last_idle_prefetch_at = at;
-    }
-
-    // ======================
-    // Image Config Accessors
-    // ======================
-    pub(super) fn image_diff_mode(&self) -> ImageDiffMode {
-        self.image_config.image_diff_mode
-    }
-
-    pub(super) fn transport_mode(&self) -> TransportMode {
-        self.image_config.transport_mode
-    }
-
-    pub(super) fn dirty_ratio(&self) -> f32 {
-        self.image_config.dirty_ratio
-    }
-
-    pub(super) fn tile_grid(&self) -> u32 {
-        self.image_config.tile_grid
-    }
-
-    pub(super) fn skip_step(&self) -> u32 {
-        self.image_config.skip_step
-    }
-
-    pub(super) fn image_width_limit(&self) -> u32 {
-        self.image_config.image_width
-    }
-
-    pub(super) fn image_height_limit(&self) -> u32 {
-        self.image_config.image_height
-    }
-
-    pub(super) fn image_filter_type(&self) -> ImageFilterType {
-        self.image_config.image_filter_type
-    }
-
-    pub(super) fn zoom_factor(&self) -> f32 {
-        self.image_config.zoom_factor
-    }
-
-    pub(super) fn set_zoom_factor(&mut self, zoom_factor: f32) {
-        self.image_config.zoom_factor = zoom_factor.clamp(0.1, 4.0);
-    }
-
-    pub(super) fn pan_x(&self) -> i16 {
-        self.image_config.pan_x
-    }
-
-    pub(super) fn pan_y(&self) -> i16 {
-        self.image_config.pan_y
-    }
-
-    pub(super) fn pan_by(&mut self, dx: i16, dy: i16) {
-        self.image_config.pan_x = self.image_config.pan_x.saturating_add(dx);
-        self.image_config.pan_y = self.image_config.pan_y.saturating_add(dy);
-    }
-
-    pub(super) fn set_pan(&mut self, pan_x: i16, pan_y: i16) {
-        self.image_config.pan_x = pan_x;
-        self.image_config.pan_y = pan_y;
-    }
-
-    pub(super) fn reset_pan(&mut self) {
-        self.image_config.pan_x = 0;
-        self.image_config.pan_y = 0;
-    }
-
-    pub(super) fn last_image_rect(&self) -> Option<(u16, u16, u32, u32)> {
-        self.perf.last_image_rect
-    }
-
-    // ======================
-    // Performance Accessors
-    // ======================
-    /// 描画パフォーマンスを記録する関数
-    pub(super) fn record_render_metrics(
-        &mut self,
-        duration: Duration,
-        dirty_tiles: Option<usize>,
-        placement: (u16, u16, u32, u32),
-    ) {
-        self.perf.last_render_duration = duration;
-        self.perf.last_dirty_tiles = dirty_tiles;
-        self.perf.last_image_rect = Some(placement);
-    }
-
-    pub(super) fn record_cache_result(&mut self, hit: bool) {
-        self.perf.cache_requests = self.perf.cache_requests.saturating_add(1);
-        if hit {
-            self.perf.cache_hits = self.perf.cache_hits.saturating_add(1);
-        }
-    }
 }

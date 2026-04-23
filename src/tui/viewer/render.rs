@@ -25,12 +25,12 @@ pub(super) fn render_current_mode(
     let image_data = load_image_data(image_files, current_index, state)?;
     let image_dimensions = load_image_dimensions(image_files, current_index, state)?;
     let transport_mode = effective_transport_mode(
-        state.transport_mode(),
+        state.image_config.transport_mode,
         image_dimensions,
-        state.image_width_limit(),
-        state.image_height_limit(),
+        state.image_config.image_width,
+        state.image_config.image_height,
     );
-    let always_upload = is_always_upload_mode(state.image_diff_mode());
+    let always_upload = is_always_upload_mode(state.image_config.image_diff_mode);
     let payload_hash = if always_upload {
         0
     } else {
@@ -42,7 +42,9 @@ pub(super) fn render_current_mode(
             state,
         )
     };
-    let (image_id, id_cache_hit_raw) = state.ensure_kitty_image_id(current_index, payload_hash);
+    let (image_id, id_cache_hit_raw) = state
+        .cache
+        .ensure_kitty_image_id(current_index, payload_hash);
     let id_cache_hit = !always_upload && id_cache_hit_raw;
     let encoded_payload = load_encoded_payload(image_data.as_ref());
     let should_decode_for_diff = !flags.refresh_image
@@ -50,7 +52,7 @@ pub(super) fn render_current_mode(
         && !id_cache_hit
         && state.image_render_state.active_image_id() == Some(image_id);
     let rgba_frame = if should_decode_for_diff
-        && should_decode_rgba_frame(image_dimensions, state.image_diff_mode())
+        && should_decode_rgba_frame(image_dimensions, state.image_config.image_diff_mode)
     {
         load_rgba_frame(current_index, image_data.as_ref(), state)
     } else {
@@ -75,17 +77,17 @@ pub(super) fn render_current_mode(
             full_refresh: flags.full_refresh,
             skip_image: false,
             preserve_image: false,
-            sidebar_visible: state.sidebar_visible(),
-            header_visible: state.header_visible(),
-            statusbar_visible: state.statusbar_visible(),
-            sidebar_size: state.sidebar_size(),
-            header_bg_color: state.header_bg_color(),
-            header_fg_color: state.header_fg_color(),
-            statusbar_bg_color: state.statusbar_bg_color(),
-            statusbar_fg_color: state.statusbar_fg_color(),
+            sidebar_visible: state.ui_state.sidebar_visible,
+            header_visible: state.ui_state.header_visible,
+            statusbar_visible: state.ui_state.statusbar_visible,
+            sidebar_size: state.ui_state.sidebar_size,
+            header_bg_color: state.ui_state.header_bg_color,
+            header_fg_color: state.ui_state.header_fg_color,
+            statusbar_bg_color: state.ui_state.statusbar_bg_color,
+            statusbar_fg_color: state.ui_state.statusbar_fg_color,
             always_upload,
             transport_mode,
-            diff_mode: state.image_diff_mode(),
+            diff_mode: state.image_config.image_diff_mode,
             image_dimensions,
             image_id,
             id_cache_hit,
@@ -94,27 +96,25 @@ pub(super) fn render_current_mode(
             image_data,
             encoded_payload,
             prepared_upload_payload: None,
-            dirty_ratio: state.dirty_ratio(),
-            tile_grid: state.tile_grid(),
-            skip_step: state.skip_step(),
-            zoom_factor: state.zoom_factor(),
-            pan_x: state.pan_x(),
-            pan_y: state.pan_y(),
+            dirty_ratio: state.image_config.dirty_ratio,
+            tile_grid: state.image_config.tile_grid,
+            skip_step: state.image_config.skip_step,
+            zoom_factor: state.image_config.zoom_factor,
+            pan_x: state.image_config.pan_x,
+            pan_y: state.image_config.pan_y,
             rgba_frame,
-            overlay_visible: state.overlay_visible(),
+            overlay_visible: state.ui_state.overlay_visible,
             status_message: None,
             processing_duration,
         },
         &mut state.image_render_state,
     )?;
-    state.record_render_metrics(
-        frame_metrics.render_duration,
-        frame_metrics.dirty_tiles,
-        frame_metrics.placement,
-    );
+    state.perf.last_render_duration = frame_metrics.render_duration;
+    state.perf.last_dirty_tiles = frame_metrics.dirty_tiles;
+    state.perf.last_image_rect = Some(frame_metrics.placement);
 
     if flags.prefetch_after {
-        let idle_prefetch_steps = state.prefetch_size();
+        let idle_prefetch_steps = state.preview.prefetch_size;
         prefetch_neighbors(image_files, current_index, state, idle_prefetch_steps);
     }
 
@@ -131,9 +131,10 @@ pub(super) fn render_prepared_mode(
     prepared: PreparedImagePayload,
     flags: RenderModeFlags,
 ) -> Result<()> {
-    let always_upload = is_always_upload_mode(state.image_diff_mode());
-    let (image_id, id_cache_hit_raw) =
-        state.ensure_kitty_image_id(current_index, prepared.payload_hash);
+    let always_upload = is_always_upload_mode(state.image_config.image_diff_mode);
+    let (image_id, id_cache_hit_raw) = state
+        .cache
+        .ensure_kitty_image_id(current_index, prepared.payload_hash);
     let id_cache_hit = !always_upload && id_cache_hit_raw;
     let sidebar_entries = state
         .sidebar_tree
@@ -144,23 +145,21 @@ pub(super) fn render_prepared_mode(
         .as_ref()
         .is_some_and(|payload| payload.pixel_format == UploadPixelFormat::Rgba);
 
-    if state.image_cache().enabled() && !is_raw_rgba_payload {
+    if state.cache.image_cache.enabled() && !is_raw_rgba_payload {
         state
-            .image_cache_mut()
+            .cache
+            .image_cache
             .insert(current_index, prepared.image_data.clone());
     }
-    state
-        .image_dimensions_cache_mut()
-        .insert(current_index, prepared.image_dimensions);
-    state
-        .payload_hash_cache_mut()
-        .insert(current_index, prepared.payload_hash);
-    if state.image_cache().enabled()
-        && let Some(rgba_frame) = prepared.rgba_frame.clone()
     {
-        state
-            .rgba_frame_cache_mut()
-            .insert(current_index, rgba_frame);
+        let image_cache_enabled = state.cache.image_cache.enabled();
+        let cache_entry = state.cache.entry_mut(current_index);
+        cache_entry.image_dimensions = Some(prepared.image_dimensions);
+        cache_entry.payload_hash = Some(prepared.payload_hash);
+        cache_entry.metadata_hash = Some(prepared.payload_hash);
+        if image_cache_enabled {
+            cache_entry.rgba_frame = prepared.rgba_frame.clone();
+        }
     }
 
     let frame_metrics = render_frame(
@@ -177,17 +176,17 @@ pub(super) fn render_prepared_mode(
             full_refresh: flags.full_refresh,
             skip_image: false,
             preserve_image: false,
-            sidebar_visible: state.sidebar_visible(),
-            header_visible: state.header_visible(),
-            statusbar_visible: state.statusbar_visible(),
-            sidebar_size: state.sidebar_size(),
-            header_bg_color: state.header_bg_color(),
-            header_fg_color: state.header_fg_color(),
-            statusbar_bg_color: state.statusbar_bg_color(),
-            statusbar_fg_color: state.statusbar_fg_color(),
+            sidebar_visible: state.ui_state.sidebar_visible,
+            header_visible: state.ui_state.header_visible,
+            statusbar_visible: state.ui_state.statusbar_visible,
+            sidebar_size: state.ui_state.sidebar_size,
+            header_bg_color: state.ui_state.header_bg_color,
+            header_fg_color: state.ui_state.header_fg_color,
+            statusbar_bg_color: state.ui_state.statusbar_bg_color,
+            statusbar_fg_color: state.ui_state.statusbar_fg_color,
             always_upload,
             transport_mode: prepared.transport_mode,
-            diff_mode: state.image_diff_mode(),
+            diff_mode: state.image_config.image_diff_mode,
             image_dimensions: prepared.image_dimensions,
             image_id,
             id_cache_hit,
@@ -196,27 +195,25 @@ pub(super) fn render_prepared_mode(
             image_data: prepared.image_data,
             encoded_payload: prepared.encoded_payload,
             prepared_upload_payload: prepared.prepared_upload_payload,
-            dirty_ratio: state.dirty_ratio(),
-            tile_grid: state.tile_grid(),
-            skip_step: state.skip_step(),
-            zoom_factor: state.zoom_factor(),
-            pan_x: state.pan_x(),
-            pan_y: state.pan_y(),
+            dirty_ratio: state.image_config.dirty_ratio,
+            tile_grid: state.image_config.tile_grid,
+            skip_step: state.image_config.skip_step,
+            zoom_factor: state.image_config.zoom_factor,
+            pan_x: state.image_config.pan_x,
+            pan_y: state.image_config.pan_y,
             rgba_frame: prepared.rgba_frame,
-            overlay_visible: state.overlay_visible(),
+            overlay_visible: state.ui_state.overlay_visible,
             status_message: None,
             processing_duration: prepared.prepare_duration,
         },
         &mut state.image_render_state,
     )?;
-    state.record_render_metrics(
-        frame_metrics.render_duration,
-        frame_metrics.dirty_tiles,
-        frame_metrics.placement,
-    );
+    state.perf.last_render_duration = frame_metrics.render_duration;
+    state.perf.last_dirty_tiles = frame_metrics.dirty_tiles;
+    state.perf.last_image_rect = Some(frame_metrics.placement);
 
     if flags.prefetch_after {
-        let idle_prefetch_steps = state.prefetch_size();
+        let idle_prefetch_steps = state.preview.prefetch_size;
         prefetch_neighbors(image_files, current_index, state, idle_prefetch_steps);
     }
 
@@ -251,17 +248,17 @@ pub(super) fn render_pending_mode(
             full_refresh: flags.full_refresh,
             skip_image: true,
             preserve_image: true,
-            sidebar_visible: state.sidebar_visible(),
-            header_visible: state.header_visible(),
-            statusbar_visible: state.statusbar_visible(),
-            sidebar_size: state.sidebar_size(),
-            header_bg_color: state.header_bg_color(),
-            header_fg_color: state.header_fg_color(),
-            statusbar_bg_color: state.statusbar_bg_color(),
-            statusbar_fg_color: state.statusbar_fg_color(),
+            sidebar_visible: state.ui_state.sidebar_visible,
+            header_visible: state.ui_state.header_visible,
+            statusbar_visible: state.ui_state.statusbar_visible,
+            sidebar_size: state.ui_state.sidebar_size,
+            header_bg_color: state.ui_state.header_bg_color,
+            header_fg_color: state.ui_state.header_fg_color,
+            statusbar_bg_color: state.ui_state.statusbar_bg_color,
+            statusbar_fg_color: state.ui_state.statusbar_fg_color,
             always_upload: false,
-            transport_mode: state.transport_mode(),
-            diff_mode: state.image_diff_mode(),
+            transport_mode: state.image_config.transport_mode,
+            diff_mode: state.image_config.image_diff_mode,
             image_dimensions: (0, 0),
             image_id: 0,
             id_cache_hit: false,
@@ -270,14 +267,14 @@ pub(super) fn render_pending_mode(
             image_data: Arc::<[u8]>::from([]),
             encoded_payload: Arc::<str>::from(""),
             prepared_upload_payload: None,
-            dirty_ratio: state.dirty_ratio(),
-            tile_grid: state.tile_grid(),
-            skip_step: state.skip_step(),
-            zoom_factor: state.zoom_factor(),
-            pan_x: state.pan_x(),
-            pan_y: state.pan_y(),
+            dirty_ratio: state.image_config.dirty_ratio,
+            tile_grid: state.image_config.tile_grid,
+            skip_step: state.image_config.skip_step,
+            zoom_factor: state.image_config.zoom_factor,
+            pan_x: state.image_config.pan_x,
+            pan_y: state.image_config.pan_y,
             rgba_frame: None,
-            overlay_visible: state.overlay_visible(),
+            overlay_visible: state.ui_state.overlay_visible,
             status_message: message.map(str::to_owned),
             processing_duration: Duration::ZERO,
         },

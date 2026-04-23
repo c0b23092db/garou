@@ -20,7 +20,7 @@ use sort::{SortContext, apply_sort};
 use zoom::{fit_image, zoom_in, zoom_out};
 
 fn is_mouse_on_image(mouse: MouseEvent, state: &ViewerState) -> bool {
-    let Some((x, y, w, h)) = state.last_image_rect() else {
+    let Some((x, y, w, h)) = state.perf.last_image_rect else {
         return false;
     };
     let x_end = u32::from(x).saturating_add(w);
@@ -70,19 +70,19 @@ pub fn process_key(key: KeyEvent, ctx: KeyProcessContext<'_>) -> bool {
         }
         // Alt+s: サイドバーの表示切替
         KeyCode::Char('s') | KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::ALT) => {
-            state.set_sidebar_visible(!state.sidebar_visible());
+            state.ui_state.sidebar_visible = !state.ui_state.sidebar_visible;
             clear_and_full_refresh(redraw_mode, state);
             false
         }
         // Alt+d: ステータスバーの表示切替
         KeyCode::Char('d') | KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::ALT) => {
-            state.set_statusbar_visible(!state.statusbar_visible());
+            state.ui_state.statusbar_visible = !state.ui_state.statusbar_visible;
             clear_and_full_refresh(redraw_mode, state);
             false
         }
         // Alt+f: ヘッダーの表示切替
         KeyCode::Char('f') | KeyCode::Char('F') if key.modifiers.contains(KeyModifiers::ALT) => {
-            state.set_header_visible(!state.header_visible());
+            state.ui_state.header_visible = !state.ui_state.header_visible;
             clear_and_full_refresh(redraw_mode, state);
             false
         }
@@ -98,19 +98,19 @@ pub fn process_key(key: KeyEvent, ctx: KeyProcessContext<'_>) -> bool {
         }
         // Tab: 画像情報オーバーレイの表示切替
         KeyCode::Tab => {
-            state.set_overlay_visible(!state.overlay_visible());
+            state.ui_state.overlay_visible = !state.ui_state.overlay_visible;
             clear_and_full_refresh(redraw_mode, state);
             false
         }
         /* サイドバーのカーソル移動 */
         // j/k: サイドバーでのカーソル移動
-        KeyCode::Char('j') | KeyCode::Down if state.sidebar_visible() => {
+        KeyCode::Char('j') | KeyCode::Down if state.ui_state.sidebar_visible => {
             if state.sidebar_tree.move_cursor(1) {
                 apply_sidebar_cursor_change(current_index, redraw_mode, state, debounce_duration);
             }
             false
         }
-        KeyCode::Char('k') | KeyCode::Up if state.sidebar_visible() => {
+        KeyCode::Char('k') | KeyCode::Up if state.ui_state.sidebar_visible => {
             if state.sidebar_tree.move_cursor(-1) {
                 apply_sidebar_cursor_change(current_index, redraw_mode, state, debounce_duration);
             }
@@ -118,7 +118,7 @@ pub fn process_key(key: KeyEvent, ctx: KeyProcessContext<'_>) -> bool {
         }
         // Ctrl+b: 一ページ前へ移動
         KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            let moved = if state.sidebar_visible() {
+            let moved = if state.ui_state.sidebar_visible {
                 state.sidebar_tree.move_cursor_page(-1, page_rows)
             } else {
                 let old = *current_index;
@@ -127,7 +127,7 @@ pub fn process_key(key: KeyEvent, ctx: KeyProcessContext<'_>) -> bool {
             };
 
             if moved {
-                if state.sidebar_visible() {
+                if state.ui_state.sidebar_visible {
                     apply_sidebar_cursor_change(
                         current_index,
                         redraw_mode,
@@ -148,7 +148,7 @@ pub fn process_key(key: KeyEvent, ctx: KeyProcessContext<'_>) -> bool {
         }
         // Ctrl+f: 一ページ次へ移動
         KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            let moved = if state.sidebar_visible() {
+            let moved = if state.ui_state.sidebar_visible {
                 state.sidebar_tree.move_cursor_page(1, page_rows)
             } else {
                 let old = *current_index;
@@ -157,7 +157,7 @@ pub fn process_key(key: KeyEvent, ctx: KeyProcessContext<'_>) -> bool {
             };
 
             if moved {
-                if state.sidebar_visible() {
+                if state.ui_state.sidebar_visible {
                     apply_sidebar_cursor_change(
                         current_index,
                         redraw_mode,
@@ -178,7 +178,7 @@ pub fn process_key(key: KeyEvent, ctx: KeyProcessContext<'_>) -> bool {
         }
         // g: 先頭へ移動
         KeyCode::Char('g') => {
-            let moved = if state.sidebar_visible() {
+            let moved = if state.ui_state.sidebar_visible {
                 state.sidebar_tree.move_to_start()
             } else {
                 let old = *current_index;
@@ -187,7 +187,7 @@ pub fn process_key(key: KeyEvent, ctx: KeyProcessContext<'_>) -> bool {
             };
 
             if moved {
-                if state.sidebar_visible() {
+                if state.ui_state.sidebar_visible {
                     apply_sidebar_cursor_change(
                         current_index,
                         redraw_mode,
@@ -208,7 +208,7 @@ pub fn process_key(key: KeyEvent, ctx: KeyProcessContext<'_>) -> bool {
         }
         // G: 末尾へ移動
         KeyCode::Char('G') => {
-            let moved = if state.sidebar_visible() {
+            let moved = if state.ui_state.sidebar_visible {
                 state.sidebar_tree.move_to_end()
             } else {
                 let old = *current_index;
@@ -217,7 +217,7 @@ pub fn process_key(key: KeyEvent, ctx: KeyProcessContext<'_>) -> bool {
             };
 
             if moved {
-                if state.sidebar_visible() {
+                if state.ui_state.sidebar_visible {
                     apply_sidebar_cursor_change(
                         current_index,
                         redraw_mode,
@@ -237,7 +237,7 @@ pub fn process_key(key: KeyEvent, ctx: KeyProcessContext<'_>) -> bool {
             false
         }
         // Enter: ディレクトリの展開/折りたたみ（サイドバー表示時）
-        KeyCode::Enter if state.sidebar_visible() => {
+        KeyCode::Enter if state.ui_state.sidebar_visible => {
             if state.sidebar_tree.toggle_current_dir() {
                 *redraw_mode = RedrawMode::HeaderRefresh;
                 return false;
@@ -247,7 +247,7 @@ pub fn process_key(key: KeyEvent, ctx: KeyProcessContext<'_>) -> bool {
         }
         // h/l: 画像の前後移動（サイドバー非表示時）またはディレクトリの展開/折りたたみ（サイドバー表示時）
         KeyCode::Char('h') | KeyCode::Left => {
-            if state.sidebar_visible() {
+            if state.ui_state.sidebar_visible {
                 if state.sidebar_tree.collapse_current_dir() {
                     *redraw_mode = RedrawMode::HeaderRefresh;
                 }
@@ -265,7 +265,7 @@ pub fn process_key(key: KeyEvent, ctx: KeyProcessContext<'_>) -> bool {
             false
         }
         KeyCode::Char('l') | KeyCode::Right => {
-            if state.sidebar_visible() {
+            if state.ui_state.sidebar_visible {
                 if state.sidebar_tree.expand_current_dir() {
                     *redraw_mode = RedrawMode::HeaderRefresh;
                 }
@@ -437,7 +437,7 @@ pub fn process_mouse(
         _ => {}
     }
 
-    if !state.sidebar_visible() {
+    if !state.ui_state.sidebar_visible {
         return false;
     }
 

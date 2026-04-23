@@ -46,11 +46,8 @@ pub(super) fn apply_sort(ctx: SortContext<'_>, new_field: SortField, new_descend
         .refresh_image_index_map(image_files, current_path.as_deref());
 
     // indexベースのキャッシュは並べ替え後に不整合となるため全クリアする。
-    state.image_cache_mut().clear();
-    state.image_dimensions_cache_mut().clear();
-    state.payload_hash_cache_mut().clear();
-    state.rgba_frame_cache_mut().clear();
-    state.kitty_id_cache_mut().clear();
+    state.cache.image_cache.clear();
+    state.cache.entries.clear();
 
     clear_pending_replace(state);
     *redraw_mode = RedrawMode::FullRefresh;

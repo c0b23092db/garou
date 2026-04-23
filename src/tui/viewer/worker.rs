@@ -1,7 +1,9 @@
 use anyhow::Result;
 use std::{path::PathBuf, sync::mpsc, thread};
 
-use super::super::image_pipeline::{PreparedImagePayload, prepare_image_payload};
+use super::super::image_pipeline::{
+    PreparedImagePayload, load_image_dimensions, load_metadata_hash, prepare_image_payload,
+};
 use super::super::state::ViewerState;
 use crate::model::config::{ImageFilterType, TransportMode};
 
@@ -16,6 +18,7 @@ pub(super) struct PreviewRequest {
     pub image_width_limit: u32,
     pub image_height_limit: u32,
     pub allow_rgba_decode: bool,
+    pub metadata_hash: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -34,7 +37,7 @@ pub(super) fn submit_preview_request(
     diff_mode: crate::model::config::ImageDiffMode,
     force: bool,
 ) -> bool {
-    if let Some((expected_index, _)) = state.expected_preview_generation()
+    if let Some((expected_index, _)) = state.preview.expected_preview_generation
         && expected_index == index
         && !force
     {
@@ -42,24 +45,28 @@ pub(super) fn submit_preview_request(
     }
 
     if let Some(path) = image_files.get(index) {
-        state.increment_preview_generation();
-        let generation = state.preview_generation();
-        state.set_expected_preview_generation(Some((index, generation)));
+        state.preview.preview_generation = state.preview.preview_generation.saturating_add(1);
+        let generation = state.preview.preview_generation;
+        state.preview.expected_preview_generation = Some((index, generation));
+        let metadata_hash = load_image_dimensions(image_files, index, state)
+            .ok()
+            .map(|dims| load_metadata_hash(index, path, dims, state));
         if tx
             .send(PreviewRequest {
                 index,
                 generation,
                 path: path.clone(),
                 diff_mode,
-                transport_mode: state.transport_mode(),
-                image_filter_type: state.image_filter_type(),
-                image_width_limit: state.image_width_limit(),
-                image_height_limit: state.image_height_limit(),
+                transport_mode: state.image_config.transport_mode,
+                image_filter_type: state.image_config.image_filter_type,
+                image_width_limit: state.image_config.image_width,
+                image_height_limit: state.image_config.image_height,
                 allow_rgba_decode: state.image_render_state.active_image_id().is_some() && !force,
+                metadata_hash,
             })
             .is_err()
         {
-            state.set_expected_preview_generation(None);
+            state.preview.expected_preview_generation = None;
             return false;
         }
         return true;
@@ -91,6 +98,7 @@ pub(super) fn spawn_preview_worker() -> (
                 request.image_width_limit,
                 request.image_height_limit,
                 request.allow_rgba_decode,
+                request.metadata_hash,
             )
             .map_err(|e| e.to_string());
             if resp_tx

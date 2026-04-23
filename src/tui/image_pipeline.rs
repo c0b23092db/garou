@@ -141,6 +141,26 @@ fn image_metadata_hash(image_path: &Path, image_dimensions: (u32, u32)) -> u64 {
     hasher.finish()
 }
 
+/// 画像メタデータハッシュを読み込む関数。キャッシュがあればキャッシュを優先する。
+pub(super) fn load_metadata_hash(
+    index: usize,
+    image_path: &Path,
+    image_dimensions: (u32, u32),
+    state: &mut ViewerState,
+) -> u64 {
+    if let Some(cached) = state
+        .cache
+        .entry(index)
+        .and_then(|entry| entry.metadata_hash)
+    {
+        return cached;
+    }
+
+    let hash = image_metadata_hash(image_path, image_dimensions);
+    state.cache.entry_mut(index).metadata_hash = Some(hash);
+    hash
+}
+
 /// ペイロードハッシュを読み込む関数。キャッシュがあればキャッシュを優先する。
 pub(super) fn load_payload_hash(
     index: usize,
@@ -149,12 +169,16 @@ pub(super) fn load_payload_hash(
     image_dimensions: (u32, u32),
     state: &mut ViewerState,
 ) -> u64 {
-    if let Some(&cached) = state.payload_hash_cache().get(&index) {
+    if let Some(cached) = state
+        .cache
+        .entry(index)
+        .and_then(|entry| entry.payload_hash)
+    {
         return cached;
     }
 
-    let hash = image_metadata_hash(image_path, image_dimensions);
-    state.payload_hash_cache_mut().insert(index, hash);
+    let hash = load_metadata_hash(index, image_path, image_dimensions, state);
+    state.cache.entry_mut(index).payload_hash = Some(hash);
     hash
 }
 
@@ -180,6 +204,7 @@ pub(super) fn prepare_image_payload(
     file_width_limit: u32,
     file_height_limit: u32,
     allow_rgba_decode: bool,
+    cached_payload_hash: Option<u64>,
 ) -> Result<PreparedImagePayload> {
     let started = Instant::now();
     let source_dims = ::image::image_dimensions(image_path).unwrap_or((1, 1));
@@ -287,8 +312,8 @@ pub(super) fn prepare_image_payload(
         _ => None,
     };
 
-    // ハッシュ計算
-    let payload_hash = image_metadata_hash(image_path, image_dimensions);
+    let payload_hash =
+        cached_payload_hash.unwrap_or_else(|| image_metadata_hash(image_path, image_dimensions));
 
     Ok(PreparedImagePayload {
         image_data,
@@ -309,19 +334,20 @@ pub(super) fn load_image_data(
     index: usize,
     state: &mut ViewerState,
 ) -> Result<Arc<[u8]>> {
-    if !state.image_cache().enabled() {
+    if !state.cache.image_cache.enabled() {
         let bytes = std::fs::read(&image_files[index])?;
         return Ok(Arc::from(bytes));
     }
 
-    if let Some(cached) = state.image_cache_mut().get(index) {
-        state.record_cache_result(true);
+    if let Some(cached) = state.cache.image_cache.get(index) {
+        state.perf.cache_requests = state.perf.cache_requests.saturating_add(1);
+        state.perf.cache_hits = state.perf.cache_hits.saturating_add(1);
         return Ok(cached);
     }
 
-    state.record_cache_result(false);
+    state.perf.cache_requests = state.perf.cache_requests.saturating_add(1);
     let data: Arc<[u8]> = Arc::from(std::fs::read(&image_files[index])?);
-    state.image_cache_mut().insert(index, data.clone());
+    state.cache.image_cache.insert(index, data.clone());
     Ok(data)
 }
 
@@ -331,12 +357,16 @@ pub(super) fn load_image_dimensions(
     index: usize,
     state: &mut ViewerState,
 ) -> Result<(u32, u32)> {
-    if let Some(&dims) = state.image_dimensions_cache().get(&index) {
+    if let Some(dims) = state
+        .cache
+        .entry(index)
+        .and_then(|entry| entry.image_dimensions)
+    {
         return Ok(dims);
     }
 
     let dims = ::image::image_dimensions(&image_files[index])?;
-    state.image_dimensions_cache_mut().insert(index, dims);
+    state.cache.entry_mut(index).image_dimensions = Some(dims);
     Ok(dims)
 }
 
@@ -356,15 +386,18 @@ pub(super) fn load_rgba_frame(
     image_data: &[u8],
     state: &mut ViewerState,
 ) -> Option<RgbaFrame> {
-    if state.image_cache().enabled()
-        && let Some(cached) = state.rgba_frame_cache().get(&index)
+    if state.cache.image_cache.enabled()
+        && let Some(cached) = state
+            .cache
+            .entry(index)
+            .and_then(|entry| entry.rgba_frame.as_ref())
     {
         return Some(cached.clone());
     }
 
     let decoded = render_image::decode_rgba_payload(image_data)?;
-    if state.image_cache().enabled() {
-        state.rgba_frame_cache_mut().insert(index, decoded.clone());
+    if state.cache.image_cache.enabled() {
+        state.cache.entry_mut(index).rgba_frame = Some(decoded.clone());
     }
     Some(decoded)
 }
@@ -376,11 +409,11 @@ pub(super) fn prefetch_neighbors(
     state: &mut ViewerState,
     max_steps: usize,
 ) {
-    if !state.image_cache().enabled() || max_steps == 0 || image_files.len() < 2 {
+    if !state.cache.image_cache.enabled() || max_steps == 0 || image_files.len() < 2 {
         return;
     }
 
-    if let Some((anchor_index, anchor_direction, anchor_depth)) = state.last_prefetch_state()
+    if let Some((anchor_index, anchor_direction, anchor_depth)) = state.preview.last_prefetch_state
         && anchor_index == current_index
         && anchor_direction == state.last_nav_direction
         && anchor_depth >= max_steps
@@ -396,14 +429,14 @@ pub(super) fn prefetch_neighbors(
             NavDirection::Backward => (current_index + len - step_mod) % len,
         };
 
-        if primary == current_index || state.image_cache().contains(primary) {
+        if primary == current_index || state.cache.image_cache.contains(primary) {
             continue;
         }
 
         if let Ok(data) = std::fs::read(&image_files[primary]).map(Arc::from) {
-            state.image_cache_mut().insert(primary, data);
+            state.cache.image_cache.insert(primary, data);
         }
     }
 
-    state.set_last_prefetch_state(Some((current_index, state.last_nav_direction, max_steps)));
+    state.preview.last_prefetch_state = Some((current_index, state.last_nav_direction, max_steps));
 }
