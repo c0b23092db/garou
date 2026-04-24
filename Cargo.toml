@@ -9,6 +9,15 @@ edition = "2024"
 readme = "README.md"
 authors = ["ikata"]
 repository = "https://github.com/c0b23092db/garou"
+include = [
+  "src/**",
+  "Cargo.toml",
+  "Cargo.lock",
+  "README.md",
+  "README/README-ja.md",
+  "README/png.png",
+  "LICENSE",
+]
 
 [[bin]]
 name = "siv"
