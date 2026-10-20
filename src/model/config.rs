@@ -163,7 +163,10 @@ fn parse_config(content: &str) -> Result<RawConfig> {
     let mut merged: toml::Table = toml::from_str(DEFAULT_CONFIG)?;
     let overrides: toml::Table = toml::from_str(content)?;
     for (key, value) in overrides {
-        match (merged.get_mut(&key).and_then(toml::Value::as_table_mut), value) {
+        match (
+            merged.get_mut(&key).and_then(toml::Value::as_table_mut),
+            value,
+        ) {
             (Some(base), toml::Value::Table(section)) => base.extend(section),
             (_, value) => {
                 merged.insert(key, value);

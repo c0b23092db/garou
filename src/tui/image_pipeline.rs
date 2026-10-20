@@ -201,6 +201,7 @@ pub(super) struct PreparedImagePayload {
 }
 
 /// ワーカースレッドで画像描画に必要なデータをまとめて準備する
+#[allow(clippy::too_many_arguments)]
 pub(super) fn prepare_image_payload(
     image_path: &Path,
     diff_mode: crate::model::config::ImageDiffMode,
