@@ -1,36 +1,33 @@
 # Garou(がろう) - Simple Image Protocol Viewer for Kitty Graphics Protocol
+**[日本語](README/README-ja.md) / English**
 ```bash
-siv.exe
+siv
 ```
-**High-speed TUI image viewer using Kitty Graphics Protocol**
+***TUI image viewer using the Kitty Graphics Protocol***
 
 ![Demo Movie](README/gif.gif)
 
-日本語 - [README-ja.md](README/README-ja.md)
-
 ## ⭐ Features
-- **Fast Differential Display**: Optimized rendering for consecutive images
 - **LRU Caching**: Memory-efficient image management
 - **Debounce Control**: Optimized preview updates on cursor movement
-- **Natural Sort**: Display file names in order 1,2,3,10,11,12
+- **Natural Sort**: File names are listed in the order 1, 2, 3, 10, 11, 12
+- **Mouse Control**: Zoom with the wheel, pan by dragging
 
 ## 💻 System Requirements
-### Terminal Emulator
-- Must support **Kitty Graphics Protocol**
-#### Verified
-- [x] Wezterm Nightly
-#### Not Working
-- Windows Terminal
-
-### Operating System
+### OS
 #### Verified
 - [x] Windows 11 (64bit)
 #### Unverified
 - [ ] Linux
 - [ ] Mac
+### Terminal Emulator
+A **terminal emulator that supports the Kitty Graphics Protocol** is required.
+#### Verified
+- [x] Wezterm Nightly
+#### Not Working
+- Windows Terminal
 
 ## 📦 Installation
-
 ### cargo
 #### `cargo install`
 ```bash
@@ -60,52 +57,19 @@ Options:
   -V, --version  Print version
 ```
 
-## ⌨️ Controls
-
-### Always Available
-- **`Q / esc`**: Quit
-- **`O`**: Open with default program
-- **`R`**: Refresh image
-- **`Shift + R`**: Refresh screen
-- **`Alt + S`**: Toggle sidebar
-- **`Alt + D`**: Toggle statusbar
-- **`Alt + F`**: Toggle header
-
-### Image Display
-- **`H / ←`**: Previous image
-- **`L / →`**: Next image
-
-### Sidebar
-- **`J / ↓`**: Move cursor down (instant preview)
-- **`K / ↑`**: Move cursor up (instant preview)
-- **`G`**: Move to top (instant preview)
-- **`Shift + G`**: Move to bottom (instant preview)
-- **`Ctrl + B`**: Move up one page (instant preview)
-- **`Ctrl + F`**: Move down one page (instant preview)
-- **`H / ←`**: Collapse folder
-- **`L / →`**: Expand folder
-- **`Enter`**: Toggle folder
-- **`Left Click`**: Select file
-- **`Wheel`**: Move cursor
-
-### Experimental / Test Controls (Preview)
-- (preview) `0`: Fit image to view
-- (preview) `+`: Zoom in
-- (preview) `-`: Zoom out
-- (preview) `Shift + J`, `Shift + K`, `Shift + H`, `Shift + L`: Pan image
-- (preview) `Wheel`: Image Zoom in / out
-
 ## ⚙️ Configuration File
-Reads from `~/.config/garou/config.toml`.
+Reads `~/.config/garou/config.toml`.
+Write only the settings you want to change; everything else keeps its default.
+The TOML below shows the default settings ([`config/config.toml`](config/config.toml), embedded in the binary).
 
 ```toml
 [image]
 extensions = ["png", "jpg", "jpeg", "gif", "webp", "bmp"]
-diff_mode = "All"
 transport_mode = "auto"
 filter_type = "Nearest"
 image_width = 5120
 image_height = 2880
+diff_mode = "All"
 dirty_ratio = 0.1
 tile_grid = 32
 skip_step = 1
@@ -115,7 +79,7 @@ sidebar = true
 header = true
 statusbar = true
 sidebar_size = 20
-preview_debounce = 100       # Preview update debounce (milliseconds)
+preview_debounce = 100  # Preview update debounce (milliseconds)
 poll_interval = 10      # Idle polling interval (milliseconds)
 prefetch_interval = 100 # Idle prefetch interval (milliseconds)
 header_bg_color = "dark_blue"    # Header background color
@@ -124,57 +88,55 @@ statusbar_bg_color = "dark_gray" # Statusbar background color
 statusbar_fg_color = "white"     # Statusbar text color
 
 [cache]
-lru_size = 10         # Maximum LRU cache entries
-prefetch_size = 1     # Prefetch cache size
-max_bytes = 268435456 # Cache total size limit (bytes)
+lru_size = 10         # Maximum number of LRU cache entries
+prefetch_size = 1     # Number of prefetched images
+max_bytes = 268435456 # Total cache size limit (bytes)
 ```
 
 ### **image**
 
-#### Image display process (diff_mode)
-- `All`: No differential check, refresh image every time
-
-##### Experimental/Preview behavior
-- `Full`: Check all RGB (FFFFFF) addresses, update only if changes detected
-- `Half`: Check only RGB addresses 0, 2, 4
-
-#### transport_mode (Kitty Graphics Protocol transfer mode)
+#### transport_mode: Kitty Graphics Protocol transfer mode
 - `auto`
 - `direct` (`d`)
 - `file` (`f`)
 - `temp_file` (`t`)
 - `shared_memory` (`s`)
 
-##### auto behavior
+##### `auto` behavior
 - Linux: `shared_memory` -> `direct`
 - Windows: `direct`
 
-#### Maximum Image Size (image_width, image_height)
-When using file, temp_file, or shared_memory, images larger than this size will fall back to direct mode.
-Default allows loading images up to 5K resolution.
+#### image_width, image_height: Maximum size when rendering via `file` etc.
+The maximum size of an image rendered when transport_mode is `file`, `temp_file`, or `shared_memory`. Images larger than this fall back to `direct`.
+By default, images up to 5K can be loaded.
 
-#### Decode Filter (filter_type)
-Used when transport_mode = "direct"
-See: [image::imageops::FilterType](https://docs.rs/image/latest/image/imageops/enum.FilterType.html)
+#### filter_type: Image decode filter
+The decode filter used when transport_mode is `direct`.
+See [image::imageops::FilterType](https://docs.rs/image/latest/image/imageops/enum.FilterType.html) in the image crate for details.
 - `Nearest`
 - `Triangle`
 - `CatmullRom`
 - `Gaussian`
 - `Lanczos3`
 
-#### Differential determination threshold (dirty_ratio)
-Threshold for determining if differential. Can be set from 0.0 to 1.0.
+#### diff_mode: Image display process
+- `All`: No difference check; the image is refreshed every time
+- `Full`: Checks every RGB (FFFFFF) address and updates only when something changed
+- `Half`: Checks only RGB (FFFFFF) addresses 0, 2, and 4
 
-#### Differential determination tile (tile_grid)
-Pixel size of one side of tiles used for change detection.
+#### dirty_ratio: Difference threshold
+The threshold for deciding whether a region has changed. Accepts 0.0 to 1.0.
 
-#### Pixel skipping (skip_step)
-Scan at specified pixel intervals.
+#### tile_grid: Difference check tile
+The side length, in pixels, of the tiles used for change detection.
+
+#### skip_step: Pixel skipping
+Scans pixels at the given interval.
 
 ### **display**
 
-#### Startup expansion
-Settings for initial open/closed state.
+#### sidebar, header, statusbar: Shown at startup
+Whether each panel is open or closed at startup.
 - sidebar
 - header
 - statusbar
@@ -197,33 +159,33 @@ The following colors are available:
 - dark_magenta
 - cyan
 - dark_cyan
-- #RRGGBB (e.g., #1E90FF)
-- rgb(r,g,b) (e.g., rgb(30,144,255))
+- #RRGGBB (e.g. #1E90FF)
+- rgb(r,g,b) (e.g. rgb(30,144,255))
 
-#### Preview update debounce (preview_debounce)
-Specifies the debounce time in milliseconds for preview updates during user operations.
+#### preview_debounce: Preview update debounce
+The debounce time during user input, in milliseconds.
 
-#### Idle polling interval (poll_interval)
-Specifies the maximum wait time in milliseconds before checking for keyboard or mouse activity during idle state.
+#### poll_interval: Idle polling interval
+The maximum wait time before checking for keyboard or mouse input, in milliseconds.
 
-#### Idle prefetch interval (prefetch_interval)
-Specifies the minimum interval in milliseconds for prefetching adjacent images while the application is idle.
+#### prefetch_interval: Idle prefetch interval
+The minimum interval for prefetching adjacent images while idle, in milliseconds.
 
 ### **cache**
 
-#### max_bytes
-Default value is **268435456** (`256 * 1024 * 1024`).
+#### max_bytes: Image cache capacity
+The default is **268435456** (256MB, `256 * 1024 * 1024`).
 
 ## 🔭 Recommended Settings
-### Windows (Local)
+### Local
 ```toml
 [image]
 diff_mode = "All"
 transport_mode = "file"
 
 [display]
-sidebar = true
 header = true
+sidebar = true
 statusbar = false
 sidebar_size = 20
 preview_debounce = 50
@@ -233,23 +195,98 @@ lru_size = 5
 prefetch_size = 1
 ```
 
-## 📝 TODO
-- Fast differential display
-- Fast display for large size images
+## ⌨️ Controls
+Key bindings can be changed in `~/.config/garou/keymap.toml`.
+Write only the actions you want to change; each entry replaces that action's default keys.
+The TOML below shows the default settings ([`config/keymap.toml`](config/keymap.toml), embedded in the binary).
 
-Please refer to the Japanese version of README.md for other details.
+```toml
+# ---- General ----
+quit = ["q", "esc"]                # Quit
+open = ["o", "O"]                  # Open with the default app
+refresh_image = ["r"]              # Re-send the image
+refresh_screen = ["R"]             # Redraw the whole screen
+toggle_sidebar = ["alt+s", "alt+S"]   # Toggle sidebar
+toggle_statusbar = ["alt+d", "alt+D"] # Toggle statusbar
+toggle_header = ["alt+f", "alt+F"]    # Toggle header
+toggle_overlay = ["tab"]           # Toggle image info overlay
+
+# ---- Navigation ----
+# Sidebar shown: prev / next collapse / expand the folder
+# Sidebar hidden: previous / next image (wraps around at the ends)
+prev = ["h", "left"]
+next = ["l", "right"]
+up = ["k", "up"]                   # Move sidebar cursor up (sidebar shown only)
+down = ["j", "down"]               # Move sidebar cursor down (sidebar shown only)
+page_up = ["ctrl+b"]               # Up one page
+page_down = ["ctrl+f"]             # Down one page
+first = ["g"]                      # Go to first
+last = ["G"]                       # Go to last
+toggle_dir = ["enter"]             # Toggle folder (sidebar shown only)
+
+# ---- Zoom / Pan ----
+zoom_in = ["+", "="]               # Zoom in
+zoom_out = ["-"]                   # Zoom out
+zoom_fit = ["0"]                   # Fit to screen
+pan_left = ["H"]                   # Pan view left (while zoomed in)
+pan_right = ["L"]                  # Pan view right (while zoomed in)
+pan_up = ["K"]                     # Pan view up (while zoomed in)
+pan_down = ["J"]                   # Pan view down (while zoomed in)
+
+# ---- Sort (uppercase = descending) ----
+sort_natural = ["n"]               # Name (natural order: 1, 2, 10)
+sort_natural_desc = ["N"]
+sort_modified = ["m"]              # Modified time
+sort_modified_desc = ["M"]
+sort_size = ["s"]                  # File size
+sort_size_desc = ["S"]
+
+# ---- File Operations ----
+delete = ["d"]                     # Move to trash (confirm with y)
+rename = ["f2"]                    # Rename (Enter to confirm / Esc to cancel)
+```
+
+### General
+- `Q / esc`: Quit
+- `O`: Open with the default program
+- `R`: Refresh image
+- `Shift + R`: Refresh screen
+- `Alt + S`: Toggle sidebar
+- `Alt + D`: Toggle statusbar
+- `Alt + F`: Toggle header
+
+### Image Display
+- `H / ←`: Previous image
+- `L / →`: Next image
+
+### Image Manipulation
+- `0`: Fit image
+- `+`: Zoom in
+- `-`: Zoom out
+- `Shift + J`, `Shift + K`, `Shift + H`, `Shift + L`: Pan image
+- `Drag`: Pan image
+- `Wheel`: Zoom in / out
+
+### Sidebar
+- `J / ↓`: Move cursor down
+- `K / ↑`: Move cursor up
+- `G`: Move to top
+- `Shift + G`: Move to bottom
+- `Ctrl + B`: Move up one page
+- `Ctrl + F`: Move down one page
+- `H / ←`: Collapse folder
+- `L / →`: Expand folder
+- `Enter`: Toggle folder
+- `Left Click`: Select file
+- `Wheel`: Move cursor
 
 ## 💡 Inspiration
-- Kitty Graphics Protocol (terminal image rendering)
-- yazi (high-speed image preview)
-- Neovim (keyboard-driven operation)
+- [Kitty Graphic Protocol](https://sw.kovidgoyal.net/kitty/): Image rendering in the terminal
+- [yazi](https://github.com/sxyazi/yazi): Fast image preview
+- [Neovim](https://neovim.io): Keyboard-driven operation
 
 ## 🤝 Contributing
 Bug reports, feature suggestions, and pull requests are welcome.
-The agents directory includes details such as future prospects and plans.
 
 ## 📜 LICENSE
 [MIT License](LICENSE) / <http://opensource.org/licenses/MIT>
-
-## 👤 Developer
-- ikata

@@ -36,6 +36,8 @@ pub(crate) struct SidebarTree {
     path_to_node: HashMap<PathBuf, usize>,
     image_index_by_path: HashMap<PathBuf, usize>,
     cursor_visible_index: usize,
+    root_dir: PathBuf,
+    extensions: Vec<String>,
 }
 
 /// ファイルツリーの状態を管理し、描画用のエントリを生成する構造体
@@ -66,6 +68,8 @@ impl SidebarTree {
             path_to_node: HashMap::new(),
             image_index_by_path,
             cursor_visible_index: 0,
+            root_dir: root_dir.clone(),
+            extensions: extensions.to_vec(),
         };
 
         tree.roots = build_tree_nodes(
@@ -84,6 +88,21 @@ impl SidebarTree {
         }
 
         tree
+    }
+
+    /// ファイルの削除・リネーム後にツリーを作り直す（開いているフォルダは保つ）
+    pub(in crate::tui) fn rebuild(&mut self, image_files: &[PathBuf], current: Option<&Path>) {
+        self.nodes.clear();
+        self.path_to_node.clear();
+        self.roots = build_tree_nodes(
+            &self.root_dir,
+            None,
+            0,
+            &mut self.nodes,
+            &mut self.path_to_node,
+            &self.extensions,
+        );
+        self.refresh_image_index_map(image_files, current);
     }
 
     /// visible_nodesを再構築する関数

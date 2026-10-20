@@ -55,6 +55,7 @@ fn main() -> Result<()> {
             image_height: config.image.image_height,
             image_filter_type: config.image.filter_type,
             image_extensions: config.image.extensions,
+            keymap: config.keys,
         },
     )?;
 

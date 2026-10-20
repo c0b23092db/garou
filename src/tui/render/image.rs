@@ -4,8 +4,6 @@
 mod difference;
 mod layout;
 mod protocol;
-#[allow(dead_code)]
-mod resize;
 mod state;
 mod transport;
 
@@ -23,6 +21,7 @@ use std::{
     time::Instant,
 };
 
+pub use layout::{MAX_ZOOM, MIN_ZOOM, Placement};
 pub use state::{ImageRenderMetrics, ImageRenderParams, ImageRenderState, RgbaFrame};
 
 use self::{
@@ -34,36 +33,7 @@ use self::{
 
 pub use protocol::send_delete;
 #[allow(unused_imports)]
-pub use transport::{
-    ResolvedTransport, UploadPayload, UploadPixelFormat, prepare_upload_payload_offthread,
-    resolve_transport_mode,
-};
-
-/// 画像の内容からハッシュ値を計算する。
-#[allow(dead_code)]
-pub(in crate::tui) fn hash_image_payload(image_data: &[u8], diff_mode: ImageDiffMode) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    match diff_mode {
-        ImageDiffMode::All => {
-            // All: 常時再アップロード運用。ハッシュ値は判定に使わない。
-            0u8.hash(&mut hasher);
-        }
-        ImageDiffMode::Full => {
-            image_data.hash(&mut hasher);
-        }
-        ImageDiffMode::Half => {
-            image_data.len().hash(&mut hasher);
-            for chunk in image_data.chunks(6) {
-                for idx in [0usize, 2, 4] {
-                    if let Some(byte) = chunk.get(idx) {
-                        byte.hash(&mut hasher);
-                    }
-                }
-            }
-        }
-    }
-    hasher.finish()
-}
+pub use transport::{ResolvedTransport, UploadPayload, UploadPixelFormat, resolve_transport_mode};
 
 pub(in crate::tui) fn decode_rgba_payload(image_data: &[u8]) -> Option<RgbaFrame> {
     difference::decode_rgba_frame(image_data)
@@ -73,6 +43,12 @@ fn hash_encoded_payload(encoded_payload: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     encoded_payload.hash(&mut hasher);
     hasher.finish()
+}
+
+/// セルの縦横比（高さ / 幅）
+fn cell_height_to_width_ratio() -> f32 {
+    let (width, height) = super::cell_pixel_size();
+    height as f32 / width as f32
 }
 
 /// 画像をターミナルに描画する。
@@ -86,30 +62,22 @@ pub fn render_image(
     let mut dirty_tiles: Option<usize> = None;
 
     if params.refresh_image {
-        if let Some(active_id) = state.active_image_id {
-            send_delete(stdout, active_id)?;
+        if state.has_uploaded {
+            send_delete(stdout)?;
         }
-        state.has_uploaded = false;
-        state.last_payload_hash = None;
-        state.last_encoded_payload_hash = None;
-        state.last_placement = None;
-        state.last_rgba_frame = None;
-        state.active_image_id = None;
+        state.reset_upload_state();
     }
 
-    let encoded_payload_hash = hash_encoded_payload(params.encoded_payload.as_ref());
+    // 常時再転送モードでは比較しないため、数MBになり得る payload のハッシュ計算を省く。
+    let encoded_payload_hash =
+        (!params.always_upload).then(|| hash_encoded_payload(params.encoded_payload.as_ref()));
     let same_payload_as_last = !params.refresh_image
-        && !params.always_upload
+        && encoded_payload_hash.is_some()
         && state.has_uploaded
-        && state.active_image_id == Some(params.image_id)
         && state.last_payload_hash == Some(params.payload_hash)
-        && state.last_encoded_payload_hash == Some(encoded_payload_hash);
-
-    let mut should_upload_payload =
-        params.always_upload || !params.id_cache_hit || params.refresh_image;
-    if same_payload_as_last {
-        should_upload_payload = false;
-    }
+        && state.last_encoded_payload_hash == encoded_payload_hash;
+    // 端末が保持する画像は常に 1 枚なので、直前に送った画像と同じときだけ転送を省ける
+    let should_upload_payload = !same_payload_as_last;
 
     let placement = compute_placement(
         params.term_width,
@@ -117,11 +85,11 @@ pub fn render_image(
         params.start_x,
         params.image_dimensions,
         params.zoom_factor,
-        params.pan_x,
-        params.pan_y,
+        params.pan_center,
+        cell_height_to_width_ratio(),
     );
 
-    queue!(stdout, MoveTo(placement.0, placement.1))?;
+    queue!(stdout, MoveTo(placement.x, placement.y))?;
 
     let mut upload_completed = false;
 
@@ -129,7 +97,6 @@ pub fn render_image(
         let mut patched = false;
         if !matches!(params.diff_mode, ImageDiffMode::All)
             && state.has_uploaded
-            && state.active_image_id == Some(params.image_id)
             && !params.refresh_image
             && let (Some(prev), Some(next)) =
                 (state.last_rgba_frame.as_ref(), params.rgba_frame.clone())
@@ -139,6 +106,7 @@ pub fn render_image(
                 params.diff_mode,
                 params.tile_grid,
                 params.skip_step,
+                placement.image_pixels_per_cell(),
             )
         {
             dirty_tiles = Some(rects.len());
@@ -155,7 +123,6 @@ pub fn render_image(
                         let patch_payload = general_purpose::STANDARD.encode(patch_bytes);
                         send_patch_rgba(
                             stdout,
-                            params.image_id,
                             rect.x,
                             rect.y,
                             rect.width,
@@ -189,28 +156,23 @@ pub fn render_image(
                     &mut state.shared_memory,
                 )
             };
-            send_upload(stdout, placement, params.image_id, &upload_payload)?;
+            send_upload(stdout, placement, &upload_payload)?;
             stdout.flush()?;
             upload_completed = true;
         }
 
         state.has_uploaded = true;
         state.last_payload_hash = Some(params.payload_hash);
-        state.last_encoded_payload_hash = Some(encoded_payload_hash);
+        state.last_encoded_payload_hash = encoded_payload_hash;
         state.last_placement = Some(placement);
-        state.active_image_id = Some(params.image_id);
-    } else if state.last_placement != Some(placement)
-        || state.active_image_id != Some(params.image_id)
-    {
-        send_place(stdout, placement, params.image_id)?;
+    } else if state.last_placement != Some(placement) {
+        send_place(stdout, placement)?;
         state.last_placement = Some(placement);
-        state.active_image_id = Some(params.image_id);
     }
 
     if upload_completed && state.last_placement != Some(placement) {
-        send_place(stdout, placement, params.image_id)?;
+        send_place(stdout, placement)?;
         state.last_placement = Some(placement);
-        state.active_image_id = Some(params.image_id);
     }
 
     queue!(stdout, RestorePosition)?;
@@ -219,4 +181,37 @@ pub fn render_image(
         dirty_tiles,
         placement,
     })
+}
+
+/// 転送済み画像の配置だけを更新する（ズーム・パン用。デコードや再転送はしない）。
+/// 転送済み画像がなければ None を返す。
+pub fn render_placement(
+    stdout: &mut io::Stdout,
+    state: &mut ImageRenderState,
+    term_width: u32,
+    available_height: u32,
+    start_x: u16,
+    zoom_factor: f32,
+    pan_center: (f32, f32),
+) -> Result<Option<Placement>> {
+    let Some(last) = state.last_placement.filter(|_| state.has_uploaded) else {
+        return Ok(None);
+    };
+    let placement = compute_placement(
+        term_width,
+        available_height,
+        start_x,
+        last.image,
+        zoom_factor,
+        pan_center,
+        cell_height_to_width_ratio(),
+    );
+    if placement != last {
+        queue!(stdout, SavePosition, MoveTo(placement.x, placement.y))?;
+        send_place(stdout, placement)?;
+        queue!(stdout, RestorePosition)?;
+        stdout.flush()?;
+        state.last_placement = Some(placement);
+    }
+    Ok(Some(placement))
 }

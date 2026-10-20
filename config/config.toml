@@ -1,0 +1,34 @@
+# garou の設定
+#
+# 既定値はこのファイルそのもの（バイナリに埋め込まれる）。
+# 変更するには ~/.config/garou/config.toml に変えたい項目だけを書く。
+# 書いた項目は既定値を置き換え、書かなかった項目は既定のまま。
+
+[image]
+extensions = ["png", "jpg", "jpeg", "gif", "webp", "bmp"]
+transport_mode = "auto"  # auto / direct (d) / file (f) / temp_file (t) / shared_memory (s)
+filter_type = "Nearest"  # direct 時のデコード: Nearest / Triangle / CatmullRom / Gaussian / Lanczos3
+image_width = 5120       # file などで描画する最大サイズ。超えたら direct にフォールバック
+image_height = 2880
+diff_mode = "All"        # All / Full / Half
+dirty_ratio = 0.1        # 差分判定の閾値 (0.0〜1.0)
+tile_grid = 32           # 差分判定タイルの1辺 (px)
+skip_step = 1            # 画素間引きの間隔 (px)
+
+[display]
+sidebar = true
+header = true
+statusbar = true
+sidebar_size = 20
+preview_debounce = 100  # プレビュー更新のデバウンス（ミリ秒）
+poll_interval = 10      # アイドル状態のポーリング間隔（ミリ秒）
+prefetch_interval = 100 # アイドル状態の先読み間隔（ミリ秒）
+header_bg_color = "dark_blue"    # ヘッダー背景色
+header_fg_color = "white"        # ヘッダー文字色
+statusbar_bg_color = "dark_gray" # ステータスバー背景色
+statusbar_fg_color = "white"     # ステータスバー文字色
+
+[cache]
+lru_size = 10         # LRUキャッシュ最大数
+prefetch_size = 1     # 先読みキャッシュ数
+max_bytes = 268435456 # キャッシュ総容量上限（バイト、256MB）

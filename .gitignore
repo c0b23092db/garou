@@ -1,4 +1,6 @@
+.claude
+README/old
 .jj
-/target
-/base
-/temp_image
+target
+temp_image
+repository

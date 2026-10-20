@@ -2,7 +2,7 @@
 name = "create_px"
 version = "0.1.0"
 description = "A Python package for creating pixel art images."
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 dependencies = [
     "numpy>=2.4.2",
     "pillow>=12.1.1",

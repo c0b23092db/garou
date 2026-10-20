@@ -1,285 +1,133 @@
-use std::{io, path::PathBuf, sync::Arc, time::Duration, time::Instant};
+use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 
 use super::super::image_pipeline::{
-    PreparedImagePayload, effective_transport_mode, is_always_upload_mode, load_encoded_payload,
-    load_image_data, load_image_dimensions, load_payload_hash, load_rgba_frame, prefetch_neighbors,
-    should_decode_rgba_frame,
+    PreparedImagePayload, is_always_upload_mode, prepare_image_payload,
 };
-use super::super::render::image::UploadPixelFormat;
-use super::super::render::{FrameRenderInput, RenderOptions, render_frame};
-use super::super::state::ViewerState;
-use super::RenderModeFlags;
+use super::super::render::{FrameRenderInput, FrameRenderMetrics, RenderOptions, render_frame};
+use super::{RenderModeFlags, Viewer};
 
-/// 現在のモードに応じた描画を行う関数
-pub(super) fn render_current_mode(
-    stdout: &mut io::Stdout,
-    image_files: &[PathBuf],
-    current_index: usize,
-    viewport: &super::super::state::Viewport,
-    state: &mut ViewerState,
-    flags: RenderModeFlags,
-) -> Result<()> {
-    let processing_started = Instant::now();
-    let image_data = load_image_data(image_files, current_index, state)?;
-    let image_dimensions = load_image_dimensions(image_files, current_index, state)?;
-    let transport_mode = effective_transport_mode(
-        state.image_config.transport_mode,
-        image_dimensions,
-        state.image_config.image_width,
-        state.image_config.image_height,
-    );
-    let always_upload = is_always_upload_mode(state.image_config.image_diff_mode);
-    let payload_hash = if always_upload {
-        0
-    } else {
-        load_payload_hash(
-            current_index,
-            &image_files[current_index],
-            image_data.as_ref(),
-            image_dimensions,
-            state,
-        )
-    };
-    let (image_id, id_cache_hit_raw) = state
-        .cache
-        .ensure_kitty_image_id(current_index, payload_hash);
-    let id_cache_hit = !always_upload && id_cache_hit_raw;
-    let encoded_payload = load_encoded_payload(image_data.as_ref());
-    let should_decode_for_diff = !flags.refresh_image
-        && !always_upload
-        && !id_cache_hit
-        && state.image_render_state.active_image_id() == Some(image_id);
-    let rgba_frame = if should_decode_for_diff
-        && should_decode_rgba_frame(image_dimensions, state.image_config.image_diff_mode)
-    {
-        load_rgba_frame(current_index, image_data.as_ref(), state)
-    } else {
-        None
-    };
-    let processing_duration = processing_started.elapsed();
-    let sidebar_entries = state
-        .sidebar_tree
-        .render_entries(image_files.get(current_index));
-
-    let frame_metrics = render_frame(
-        stdout,
-        FrameRenderInput {
-            image_files,
-            current_index,
-            sidebar_entries: &sidebar_entries,
-            term_width: viewport.width,
-            term_height: viewport.height,
-        },
-        RenderOptions {
-            refresh_image: flags.refresh_image,
-            full_refresh: flags.full_refresh,
-            skip_image: false,
-            preserve_image: false,
-            sidebar_visible: state.ui_state.sidebar_visible,
-            header_visible: state.ui_state.header_visible,
-            statusbar_visible: state.ui_state.statusbar_visible,
-            sidebar_size: state.ui_state.sidebar_size,
-            header_bg_color: state.ui_state.header_bg_color,
-            header_fg_color: state.ui_state.header_fg_color,
-            statusbar_bg_color: state.ui_state.statusbar_bg_color,
-            statusbar_fg_color: state.ui_state.statusbar_fg_color,
-            always_upload,
-            transport_mode,
-            diff_mode: state.image_config.image_diff_mode,
-            image_dimensions,
-            image_id,
-            id_cache_hit,
-            source_dimensions: image_dimensions,
-            payload_hash,
-            image_data,
-            encoded_payload,
-            prepared_upload_payload: None,
-            dirty_ratio: state.image_config.dirty_ratio,
-            tile_grid: state.image_config.tile_grid,
-            skip_step: state.image_config.skip_step,
-            zoom_factor: state.image_config.zoom_factor,
-            pan_x: state.image_config.pan_x,
-            pan_y: state.image_config.pan_y,
-            rgba_frame,
-            overlay_visible: state.ui_state.overlay_visible,
-            status_message: None,
-            processing_duration,
-        },
-        &mut state.image_render_state,
-    )?;
-    state.perf.last_render_duration = frame_metrics.render_duration;
-    state.perf.last_dirty_tiles = frame_metrics.dirty_tiles;
-    state.perf.last_image_rect = Some(frame_metrics.placement);
-
-    if flags.prefetch_after {
-        let idle_prefetch_steps = state.preview.prefetch_size;
-        prefetch_neighbors(image_files, current_index, state, idle_prefetch_steps);
-    }
-
-    Ok(())
-}
-
-/// 非同期で準備済みの画像データを使って描画を行う関数
-pub(super) fn render_prepared_mode(
-    stdout: &mut io::Stdout,
-    image_files: &[PathBuf],
-    current_index: usize,
-    viewport: &super::super::state::Viewport,
-    state: &mut ViewerState,
-    prepared: PreparedImagePayload,
-    flags: RenderModeFlags,
-) -> Result<()> {
-    let always_upload = is_always_upload_mode(state.image_config.image_diff_mode);
-    let (image_id, id_cache_hit_raw) = state
-        .cache
-        .ensure_kitty_image_id(current_index, prepared.payload_hash);
-    let id_cache_hit = !always_upload && id_cache_hit_raw;
-    let sidebar_entries = state
-        .sidebar_tree
-        .render_entries(image_files.get(current_index));
-
-    let is_raw_rgba_payload = prepared
-        .prepared_upload_payload
-        .as_ref()
-        .is_some_and(|payload| payload.pixel_format == UploadPixelFormat::Rgba);
-
-    if state.cache.image_cache.enabled() && !is_raw_rgba_payload {
-        state
-            .cache
-            .image_cache
-            .insert(current_index, prepared.image_data.clone());
-    }
-    {
-        let image_cache_enabled = state.cache.image_cache.enabled();
-        let cache_entry = state.cache.entry_mut(current_index);
-        cache_entry.image_dimensions = Some(prepared.image_dimensions);
-        cache_entry.payload_hash = Some(prepared.payload_hash);
-        cache_entry.metadata_hash = Some(prepared.payload_hash);
-        if image_cache_enabled {
-            cache_entry.rgba_frame = prepared.rgba_frame.clone();
-        }
-    }
-
-    let frame_metrics = render_frame(
-        stdout,
-        FrameRenderInput {
-            image_files,
-            current_index,
-            sidebar_entries: &sidebar_entries,
-            term_width: viewport.width,
-            term_height: viewport.height,
-        },
-        RenderOptions {
-            refresh_image: flags.refresh_image,
-            full_refresh: flags.full_refresh,
-            skip_image: false,
-            preserve_image: false,
-            sidebar_visible: state.ui_state.sidebar_visible,
-            header_visible: state.ui_state.header_visible,
-            statusbar_visible: state.ui_state.statusbar_visible,
-            sidebar_size: state.ui_state.sidebar_size,
-            header_bg_color: state.ui_state.header_bg_color,
-            header_fg_color: state.ui_state.header_fg_color,
-            statusbar_bg_color: state.ui_state.statusbar_bg_color,
-            statusbar_fg_color: state.ui_state.statusbar_fg_color,
-            always_upload,
-            transport_mode: prepared.transport_mode,
-            diff_mode: state.image_config.image_diff_mode,
-            image_dimensions: prepared.image_dimensions,
-            image_id,
-            id_cache_hit,
-            source_dimensions: prepared.source_dimensions,
-            payload_hash: prepared.payload_hash,
-            image_data: prepared.image_data,
-            encoded_payload: prepared.encoded_payload,
-            prepared_upload_payload: prepared.prepared_upload_payload,
-            dirty_ratio: state.image_config.dirty_ratio,
-            tile_grid: state.image_config.tile_grid,
-            skip_step: state.image_config.skip_step,
-            zoom_factor: state.image_config.zoom_factor,
-            pan_x: state.image_config.pan_x,
-            pan_y: state.image_config.pan_y,
-            rgba_frame: prepared.rgba_frame,
-            overlay_visible: state.ui_state.overlay_visible,
-            status_message: None,
-            processing_duration: prepared.prepare_duration,
-        },
-        &mut state.image_render_state,
-    )?;
-    state.perf.last_render_duration = frame_metrics.render_duration;
-    state.perf.last_dirty_tiles = frame_metrics.dirty_tiles;
-    state.perf.last_image_rect = Some(frame_metrics.placement);
-
-    if flags.prefetch_after {
-        let idle_prefetch_steps = state.preview.prefetch_size;
-        prefetch_neighbors(image_files, current_index, state, idle_prefetch_steps);
-    }
-
-    Ok(())
-}
-
-/// 非同期準備中の待機画面を描画する関数
-pub(super) fn render_pending_mode(
-    stdout: &mut io::Stdout,
-    image_files: &[PathBuf],
-    current_index: usize,
-    viewport: &super::super::state::Viewport,
-    state: &mut ViewerState,
-    message: Option<&str>,
-    flags: RenderModeFlags,
-) -> Result<()> {
-    let sidebar_entries = state
-        .sidebar_tree
-        .render_entries(image_files.get(current_index));
-
-    let _ = render_frame(
-        stdout,
-        FrameRenderInput {
-            image_files,
-            current_index,
-            sidebar_entries: &sidebar_entries,
-            term_width: viewport.width,
-            term_height: viewport.height,
-        },
+impl Viewer<'_> {
+    /// 状態から決まる描画オプション。画像の項目は待機画面用の空値
+    fn base_options(&self, flags: RenderModeFlags) -> RenderOptions {
+        let ui = &self.state.ui_state;
+        let image = &self.state.image_config;
         RenderOptions {
             refresh_image: flags.refresh_image,
             full_refresh: flags.full_refresh,
             skip_image: true,
             preserve_image: true,
-            sidebar_visible: state.ui_state.sidebar_visible,
-            header_visible: state.ui_state.header_visible,
-            statusbar_visible: state.ui_state.statusbar_visible,
-            sidebar_size: state.ui_state.sidebar_size,
-            header_bg_color: state.ui_state.header_bg_color,
-            header_fg_color: state.ui_state.header_fg_color,
-            statusbar_bg_color: state.ui_state.statusbar_bg_color,
-            statusbar_fg_color: state.ui_state.statusbar_fg_color,
+            sidebar_visible: ui.sidebar_visible,
+            header_visible: ui.header_visible,
+            statusbar_visible: ui.statusbar_visible,
+            sidebar_size: ui.sidebar_size,
+            header_bg_color: ui.header_bg_color,
+            header_fg_color: ui.header_fg_color,
+            statusbar_bg_color: ui.statusbar_bg_color,
+            statusbar_fg_color: ui.statusbar_fg_color,
             always_upload: false,
-            transport_mode: state.image_config.transport_mode,
-            diff_mode: state.image_config.image_diff_mode,
+            transport_mode: image.transport_mode,
+            diff_mode: image.image_diff_mode,
             image_dimensions: (0, 0),
-            image_id: 0,
-            id_cache_hit: false,
             source_dimensions: (0, 0),
             payload_hash: 0,
             image_data: Arc::<[u8]>::from([]),
             encoded_payload: Arc::<str>::from(""),
             prepared_upload_payload: None,
-            dirty_ratio: state.image_config.dirty_ratio,
-            tile_grid: state.image_config.tile_grid,
-            skip_step: state.image_config.skip_step,
-            zoom_factor: state.image_config.zoom_factor,
-            pan_x: state.image_config.pan_x,
-            pan_y: state.image_config.pan_y,
+            dirty_ratio: image.dirty_ratio,
+            tile_grid: image.tile_grid,
+            skip_step: image.skip_step,
+            zoom_factor: image.zoom_factor,
+            pan_center: image.pan_center,
             rgba_frame: None,
-            overlay_visible: state.ui_state.overlay_visible,
-            status_message: message.map(str::to_owned),
+            overlay_visible: ui.overlay_visible,
+            status_message: None,
             processing_duration: Duration::ZERO,
-        },
-        &mut state.image_render_state,
-    )?;
+        }
+    }
 
-    Ok(())
+    /// 画面全体を描画する
+    fn draw(&mut self, options: RenderOptions) -> Result<FrameRenderMetrics> {
+        let sidebar_entries = self
+            .state
+            .sidebar_tree
+            .render_entries(self.image_files.get(self.current_index));
+        render_frame(
+            self.stdout,
+            FrameRenderInput {
+                image_files: &self.image_files,
+                current_index: self.current_index,
+                sidebar_entries: &sidebar_entries,
+                term_width: self.viewport.width,
+                term_height: self.viewport.height,
+            },
+            options,
+            &mut self.state.image_render_state,
+        )
+    }
+
+    /// 画像を描画して統計を記録する
+    fn draw_image(&mut self, options: RenderOptions) -> Result<()> {
+        let metrics = self.draw(options)?;
+        let perf = &mut self.state.perf;
+        perf.last_render_duration = metrics.render_duration;
+        perf.last_dirty_tiles = metrics.dirty_tiles;
+        perf.last_image_rect = Some(metrics.placement);
+        Ok(())
+    }
+
+    /// 現在の画像をこのスレッドで準備して描画する（ワーカーに頼めないときの予備経路）
+    pub(super) fn render_current(&mut self, flags: RenderModeFlags) -> Result<()> {
+        let config = &self.state.image_config;
+        let prepared = prepare_image_payload(
+            &self.image_files[self.current_index],
+            config.image_diff_mode,
+            config.transport_mode,
+            config.image_filter_type,
+            config.image_width,
+            config.image_height,
+            self.state.image_render_state.has_image() && !flags.refresh_image,
+            config.render_scale,
+        )?;
+        self.render_prepared(prepared, flags)
+    }
+
+    /// 準備済みの画像データを使って描画する
+    pub(super) fn render_prepared(
+        &mut self,
+        prepared: PreparedImagePayload,
+        flags: RenderModeFlags,
+    ) -> Result<()> {
+        let options = RenderOptions {
+            skip_image: false,
+            preserve_image: false,
+            always_upload: is_always_upload_mode(self.state.image_config.image_diff_mode),
+            transport_mode: prepared.transport_mode,
+            image_dimensions: prepared.image_dimensions,
+            source_dimensions: prepared.source_dimensions,
+            payload_hash: prepared.payload_hash,
+            image_data: prepared.image_data,
+            encoded_payload: prepared.encoded_payload,
+            prepared_upload_payload: prepared.prepared_upload_payload,
+            rgba_frame: prepared.rgba_frame,
+            processing_duration: prepared.prepare_duration,
+            ..self.base_options(flags)
+        };
+        self.draw_image(options)
+    }
+
+    /// 非同期準備中の待機画面を描画する（表示中の画像は残す）
+    pub(super) fn render_pending(
+        &mut self,
+        message: Option<&str>,
+        flags: RenderModeFlags,
+    ) -> Result<()> {
+        let options = RenderOptions {
+            status_message: message.map(str::to_owned),
+            ..self.base_options(flags)
+        };
+        self.draw(options)?;
+        Ok(())
+    }
 }

@@ -13,11 +13,6 @@ pub struct DirtyRect {
     pub height: u32,
 }
 
-/// セルの横幅のピクセル数
-const CELL_PIXEL_WIDTH: u32 = 8;
-/// セルの高さのピクセル数
-const CELL_PIXEL_HEIGHT: u32 = 16;
-
 #[inline]
 fn align_down(value: u32, unit: u32) -> u32 {
     (value / unit) * unit
@@ -29,21 +24,27 @@ fn align_up(value: u32, unit: u32) -> u32 {
     value.saturating_add(unit.saturating_sub(1)) / unit * unit
 }
 
-/// 与えられた矩形をセルグリッドに合わせて拡大する
-fn align_rect_to_cell_grid(rect: DirtyRect, frame_width: u32, frame_height: u32) -> DirtyRect {
+/// 与えられた矩形をセルグリッドに合わせて拡大する。`cell` は 1 セルに当たる画像のピクセル数
+fn align_rect_to_cell_grid(
+    rect: DirtyRect,
+    frame_width: u32,
+    frame_height: u32,
+    (cell_w, cell_h): (u32, u32),
+) -> DirtyRect {
+    let (cell_w, cell_h) = (cell_w.max(1), cell_h.max(1));
     let mut start_x = rect.x;
     let mut end_x = rect.x.saturating_add(rect.width).min(frame_width);
     let mut start_y = rect.y;
     let mut end_y = rect.y.saturating_add(rect.height).min(frame_height);
 
-    if frame_width > CELL_PIXEL_WIDTH {
-        start_x = align_down(start_x, CELL_PIXEL_WIDTH);
-        end_x = align_up(end_x, CELL_PIXEL_WIDTH).min(frame_width);
+    if frame_width > cell_w {
+        start_x = align_down(start_x, cell_w);
+        end_x = align_up(end_x, cell_w).min(frame_width);
     }
 
-    if frame_height > CELL_PIXEL_HEIGHT {
-        start_y = align_down(start_y, CELL_PIXEL_HEIGHT);
-        end_y = align_up(end_y, CELL_PIXEL_HEIGHT).min(frame_height);
+    if frame_height > cell_h {
+        start_y = align_down(start_y, cell_h);
+        end_y = align_up(end_y, cell_h).min(frame_height);
     }
 
     DirtyRect {
@@ -152,13 +153,15 @@ pub fn find_dirty_rect(
     })
 }
 
-/// 2 つの RGBA フレームをタイル分割で比較し、変化したタイル矩形を返す
+/// 2 つの RGBA フレームをタイル分割で比較し、変化したタイル矩形を返す。
+/// 矩形は `cell`（1 セルに当たる画像のピクセル数）の倍数に広げる
 pub fn find_dirty_tiles(
     prev: &RgbaFrame,
     next: &RgbaFrame,
     diff_mode: ImageDiffMode,
     tile_grid: u32,
     skip_step: u32,
+    cell: (u32, u32),
 ) -> Option<Vec<DirtyRect>> {
     if prev.width != next.width || prev.height != next.height {
         return None;
@@ -205,6 +208,7 @@ pub fn find_dirty_tiles(
                     },
                     next.width,
                     next.height,
+                    cell,
                 );
                 if !dirty_tiles.contains(&rect) {
                     dirty_tiles.push(rect);
@@ -313,7 +317,8 @@ mod tests {
             ],
         );
 
-        let dirty_tiles = find_dirty_tiles(&prev, &next, ImageDiffMode::Full, 2, 1).unwrap();
+        let dirty_tiles =
+            find_dirty_tiles(&prev, &next, ImageDiffMode::Full, 2, 1, (1, 1)).unwrap();
 
         assert_eq!(dirty_tiles.len(), 1);
         assert_eq!(dirty_tiles[0].x, 2);
@@ -348,7 +353,8 @@ mod tests {
         let prev = rgba_frame(32, 32, &prev_pixels);
         let next = rgba_frame(32, 32, &next_pixels);
 
-        let dirty_tiles = find_dirty_tiles(&prev, &next, ImageDiffMode::Full, 10, 1).unwrap();
+        let dirty_tiles =
+            find_dirty_tiles(&prev, &next, ImageDiffMode::Full, 10, 1, (8, 16)).unwrap();
 
         assert_eq!(dirty_tiles.len(), 1);
         assert_eq!(dirty_tiles[0].x, 8);

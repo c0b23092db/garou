@@ -1,207 +1,165 @@
 use anyhow::Result;
 use std::{
-    io,
-    path::PathBuf,
-    sync::mpsc::{Receiver, Sender},
+    sync::mpsc::Receiver,
     time::{Duration, Instant},
 };
 
-use super::super::state::{RedrawMode, ViewerState, Viewport};
-use super::RenderModeFlags;
-use super::render::{render_current_mode, render_pending_mode, render_prepared_mode};
-use super::worker::{PreviewRequest, PreviewResponse, submit_preview_request};
+use super::super::image_pipeline::PreparedImagePayload;
+use super::super::state::RedrawMode;
+use super::worker::{PreviewResponse, submit_preview_request};
+use super::{RenderModeFlags, Viewer};
 
 #[derive(Default)]
 pub(super) struct PendingPreviewState {
-    pub(super) payload: Option<(
-        usize,
-        u64,
-        super::super::image_pipeline::PreparedImagePayload,
-    )>,
+    /// 描画待ちの準備済み画像 (index, generation, payload)
+    pub(super) payload: Option<(usize, u64, PreparedImagePayload)>,
     pub(super) force_refresh: bool,
     pub(super) started_at: Option<Instant>,
     pub(super) loading_rendered: bool,
 }
 
-pub(super) struct LoopRenderContext<'a> {
-    pub(super) stdout: &'a mut io::Stdout,
-    pub(super) image_files: &'a [PathBuf],
-    pub(super) current_index: usize,
-    pub(super) viewport: &'a Viewport,
-    pub(super) state: &'a mut ViewerState,
-}
-
-pub(super) struct PreviewSubmitParams {
-    pub(super) diff_mode: crate::model::config::ImageDiffMode,
-    pub(super) force_submit: bool,
-    pub(super) flags: RenderModeFlags,
-    pub(super) force_refresh_on_replace: bool,
-}
-
-pub(super) fn request_preview_and_render_pending(
-    ctx: &mut LoopRenderContext<'_>,
-    preview_req_tx: &Sender<PreviewRequest>,
-    pending_preview: &mut PendingPreviewState,
-    params: PreviewSubmitParams,
-) -> Result<bool> {
-    if submit_preview_request(
-        preview_req_tx,
-        ctx.image_files,
-        ctx.current_index,
-        ctx.state,
-        params.diff_mode,
-        params.force_submit,
-    ) {
-        pending_preview.started_at = Some(Instant::now());
-        pending_preview.loading_rendered = false;
-        pending_preview.force_refresh = params.force_refresh_on_replace;
-        render_pending_mode(
-            ctx.stdout,
-            ctx.image_files,
-            ctx.current_index,
-            ctx.viewport,
-            ctx.state,
-            None,
-            params.flags,
-        )?;
-        return Ok(true);
-    }
-
-    Ok(false)
-}
-
-pub(super) fn drain_preview_responses(
-    ctx: &mut LoopRenderContext<'_>,
-    preview_resp_rx: &Receiver<PreviewResponse>,
-    redraw_mode: &mut RedrawMode,
-    pending_preview: &mut PendingPreviewState,
-) -> Result<()> {
-    while let Ok(response) = preview_resp_rx.try_recv() {
-        if ctx.state.preview.expected_preview_generation
-            != Some((response.index, response.generation))
+impl Viewer<'_> {
+    /// 現在の画像を描画する。準備済みならすぐ描き、なければワーカーへ依頼して待機画面を描く。
+    /// `force` は準備済みキャッシュと依頼中の要求を無視して作り直し、届いたら再転送する。
+    /// 描画または依頼をしたら true
+    pub(super) fn request_preview(&mut self, force: bool, flags: RenderModeFlags) -> Result<bool> {
+        let lookup_started = Instant::now();
+        if !force
+            && let Some(path) = self.image_files.get(self.current_index)
+            && let Some(mut prepared) = self.state.cache.prepared.get(path)
         {
-            continue;
+            // 準備済みならワーカーを待たずに描画する。待機中の要求は世代を進めて無効化する。
+            prepared.prepare_duration = lookup_started.elapsed();
+            let preview = &mut self.state.preview;
+            preview.preview_generation = preview.preview_generation.saturating_add(1);
+            preview.expected_preview_generation = None;
+            self.pending_preview = PendingPreviewState::default();
+            self.render_prepared(prepared, flags)?;
+            return Ok(true);
         }
 
-        ctx.state.preview.expected_preview_generation = None;
-        pending_preview.started_at = None;
-        pending_preview.loading_rendered = false;
-        match response.payload {
-            Ok(payload) if response.index == ctx.current_index => {
-                pending_preview.payload = Some((response.index, response.generation, payload));
-                *redraw_mode = RedrawMode::ImageReplace;
+        if submit_preview_request(
+            &self.preview_req_tx,
+            &self.image_files,
+            self.current_index,
+            &mut self.state,
+            force,
+        ) {
+            self.pending_preview.started_at = Some(Instant::now());
+            self.pending_preview.loading_rendered = false;
+            self.pending_preview.force_refresh = force;
+            self.render_pending(None, flags)?;
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    pub(super) fn drain_preview_responses(
+        &mut self,
+        preview_resp_rx: &Receiver<PreviewResponse>,
+    ) -> Result<()> {
+        while let Ok(response) = preview_resp_rx.try_recv() {
+            if response.prefetch {
+                self.accept_prefetch_response(response);
+                continue;
             }
-            Err(error) if response.index == ctx.current_index => {
-                pending_preview.force_refresh = false;
-                render_pending_mode(
-                    ctx.stdout,
-                    ctx.image_files,
-                    ctx.current_index,
-                    ctx.viewport,
-                    ctx.state,
-                    Some(&error),
-                    RenderModeFlags {
-                        refresh_image: false,
-                        full_refresh: false,
-                        prefetch_after: false,
-                    },
-                )?;
-                *redraw_mode = RedrawMode::Idle;
+            if self.state.preview.expected_preview_generation
+                != Some((response.index, response.generation))
+            {
+                continue;
             }
-            _ => {}
+
+            self.state.preview.expected_preview_generation = None;
+            self.pending_preview.started_at = None;
+            self.pending_preview.loading_rendered = false;
+            if response.index != self.current_index {
+                continue;
+            }
+            match response.payload {
+                Ok(payload) => {
+                    self.state
+                        .cache
+                        .prepared
+                        .insert(response.path, payload.clone());
+                    self.pending_preview.payload =
+                        Some((response.index, response.generation, payload));
+                    self.redraw_mode = RedrawMode::ImageReplace;
+                }
+                Err(error) => {
+                    self.pending_preview.force_refresh = false;
+                    self.render_pending(Some(&error), RenderModeFlags::NONE)?;
+                    self.redraw_mode = RedrawMode::Idle;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// 先読み結果を準備済みキャッシュへ入れる。いま待っている表示要求と同じ画像ならそのまま描画に回す。
+    fn accept_prefetch_response(&mut self, response: PreviewResponse) {
+        let cache = &mut self.state.cache;
+        cache.prefetch_inflight.remove(&response.path);
+        // 端末サイズ変更前に準備された結果は使わない
+        let Ok(payload) = response.payload else {
+            return;
+        };
+        if response.generation != cache.prepared_epoch {
+            return;
+        }
+        cache
+            .prepared
+            .insert(response.path.clone(), payload.clone());
+
+        if let Some((index, generation)) = self.state.preview.expected_preview_generation
+            && index == self.current_index
+            && self.image_files.get(index) == Some(&response.path)
+        {
+            self.state.preview.expected_preview_generation = None;
+            self.pending_preview.started_at = None;
+            self.pending_preview.loading_rendered = false;
+            self.pending_preview.payload = Some((index, generation, payload));
+            self.redraw_mode = RedrawMode::ImageReplace;
         }
     }
 
-    Ok(())
-}
+    pub(super) fn maybe_render_loading_indicator(&mut self) -> Result<()> {
+        let pending = &self.pending_preview;
+        if self.state.preview.expected_preview_generation.is_some()
+            && pending.payload.is_none()
+            && !pending.loading_rendered
+            && pending
+                .started_at
+                .is_some_and(|started| started.elapsed() >= Duration::from_millis(100))
+        {
+            self.render_pending(Some("Load image access time"), RenderModeFlags::NONE)?;
+            self.pending_preview.loading_rendered = true;
+        }
 
-pub(super) fn maybe_render_loading_indicator(
-    ctx: &mut LoopRenderContext<'_>,
-    pending_preview: &mut PendingPreviewState,
-) -> Result<()> {
-    if ctx.state.preview.expected_preview_generation.is_some()
-        && pending_preview.payload.is_none()
-        && pending_preview.started_at.is_some()
-        && !pending_preview.loading_rendered
-        && pending_preview
-            .started_at
-            .is_some_and(|started| started.elapsed() >= Duration::from_millis(100))
-    {
-        render_pending_mode(
-            ctx.stdout,
-            ctx.image_files,
-            ctx.current_index,
-            ctx.viewport,
-            ctx.state,
-            Some("Load image access time"),
-            RenderModeFlags {
-                refresh_image: false,
+        Ok(())
+    }
+
+    pub(super) fn handle_refresh_redraw(&mut self, flags: RenderModeFlags) -> Result<()> {
+        if !self.request_preview(true, flags)? {
+            self.render_current(flags)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn handle_image_replace_redraw(&mut self) -> Result<()> {
+        if let Some((index, generation, payload)) = self.pending_preview.payload.take()
+            && index == self.current_index
+            && generation == self.state.preview.preview_generation
+        {
+            let flags = RenderModeFlags {
+                refresh_image: self.pending_preview.force_refresh,
                 full_refresh: false,
-                prefetch_after: false,
-            },
-        )?;
-        pending_preview.loading_rendered = true;
+            };
+            self.render_prepared(payload, flags)?;
+        }
+
+        self.pending_preview.force_refresh = false;
+        Ok(())
     }
-
-    Ok(())
-}
-
-pub(super) fn handle_refresh_redraw(
-    ctx: &mut LoopRenderContext<'_>,
-    preview_req_tx: &Sender<PreviewRequest>,
-    flags: RenderModeFlags,
-    pending_preview: &mut PendingPreviewState,
-) -> Result<()> {
-    let diff_mode = ctx.state.image_config.image_diff_mode;
-    let submitted = request_preview_and_render_pending(
-        ctx,
-        preview_req_tx,
-        pending_preview,
-        PreviewSubmitParams {
-            diff_mode,
-            force_submit: true,
-            flags,
-            force_refresh_on_replace: true,
-        },
-    )?;
-
-    if !submitted {
-        render_current_mode(
-            ctx.stdout,
-            ctx.image_files,
-            ctx.current_index,
-            ctx.viewport,
-            ctx.state,
-            flags,
-        )?;
-    }
-
-    Ok(())
-}
-
-pub(super) fn handle_image_replace_redraw(
-    ctx: &mut LoopRenderContext<'_>,
-    pending_preview: &mut PendingPreviewState,
-) -> Result<()> {
-    if let Some((payload_index, payload_generation, payload)) = pending_preview.payload.take()
-        && payload_index == ctx.current_index
-        && payload_generation == ctx.state.preview.preview_generation
-    {
-        render_prepared_mode(
-            ctx.stdout,
-            ctx.image_files,
-            ctx.current_index,
-            ctx.viewport,
-            ctx.state,
-            payload,
-            RenderModeFlags {
-                refresh_image: pending_preview.force_refresh,
-                full_refresh: false,
-                prefetch_after: false,
-            },
-        )?;
-    }
-
-    pending_preview.force_refresh = false;
-    Ok(())
 }

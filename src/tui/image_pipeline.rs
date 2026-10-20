@@ -5,42 +5,39 @@ use image::{DynamicImage, GenericImageView, ImageFormat, imageops::FilterType};
 use std::{
     hash::{Hash, Hasher},
     io::Cursor,
-    path::{Path, PathBuf},
+    path::Path,
     sync::Arc,
     time::{Duration, Instant},
 };
 
-use super::{
-    render::image::{
-        self as render_image, RgbaFrame, UploadPayload, UploadPixelFormat,
-        prepare_upload_payload_offthread,
-    },
-    state::{NavDirection, ViewerState},
-};
+use super::render::image::{self as render_image, RgbaFrame, UploadPayload, UploadPixelFormat};
 use crate::model::config::{ImageFilterType, TransportMode};
 
 /// 画像の最大ピクセル数を定義する定数
 const MAX_RGBA_DIFF_PIXELS: u64 = 32 * 1024 * 1024;
 const MAX_DIRECT_RGBA_UPLOAD_BYTES: usize = 512 * 1024;
-const CELL_PIXEL_WIDTH: u32 = 8;
-const CELL_PIXEL_HEIGHT: u32 = 16;
-const DPI_SCALE_NUM: u32 = 1;
-const DPI_SCALE_DEN: u32 = 1;
-
 fn terminal_pixel_limit() -> (u32, u32) {
     let (cols, rows) = terminal_size().unwrap_or((120, 40));
     let content_rows = rows.saturating_sub(2).max(1);
+    let (cell_width, cell_height) = super::render::cell_pixel_size();
 
-    let max_w = u32::from(cols)
-        .saturating_mul(CELL_PIXEL_WIDTH)
-        .saturating_mul(DPI_SCALE_NUM)
-        / DPI_SCALE_DEN;
-    let max_h = u32::from(content_rows)
-        .saturating_mul(CELL_PIXEL_HEIGHT)
-        .saturating_mul(DPI_SCALE_NUM)
-        / DPI_SCALE_DEN;
-
+    let max_w = u32::from(cols).saturating_mul(cell_width);
+    let max_h = u32::from(content_rows).saturating_mul(cell_height);
     (max_w.max(1), max_h.max(1))
+}
+
+/// 拡大表示用に画面サイズの `scale` 倍まで許す。
+/// 拡大時は転送量が増えるので、画面サイズ以上なら image_width/height（0 は無制限）で頭打ちにする
+fn scaled_limit((w, h): (u32, u32), scale: u32, (cap_w, cap_h): (u32, u32)) -> (u32, u32) {
+    let cap = |base: u32, cap: u32| {
+        let scaled = base.saturating_mul(scale.max(1));
+        if cap == 0 {
+            scaled
+        } else {
+            scaled.min(cap.max(base))
+        }
+    };
+    (cap(w, cap_w), cap(h, cap_h))
 }
 
 fn resize_for_terminal(
@@ -59,7 +56,56 @@ fn resize_for_terminal(
         .max(0.01);
     let target_w = ((w as f32 * scale).round() as u32).max(1);
     let target_h = ((h as f32 * scale).round() as u32).max(1);
-    image.resize_exact(target_w, target_h, filter)
+    // image の resize は元画像の幅 x 縮小後の高さ分を f32 で畳み込むので、大きな画像では重い。
+    // 先に整数倍の平均で縮めて、フィルタは最後の 2 倍未満の縮小だけに使う。
+    let k = (w / target_w).min(h / target_h);
+    box_shrink(image, k).resize_exact(target_w, target_h, filter)
+}
+
+/// k x k 画素の平均で 1/k に縮める（k < 2 なら何もしない）。
+/// 端の k で割り切れない画素は捨てる（最大 k-1 画素）
+fn box_shrink(image: DynamicImage, k: u32) -> DynamicImage {
+    if k < 2 {
+        return image;
+    }
+    let (w, h) = image.dimensions();
+    let (out_w, out_h) = (w / k, h / k);
+    match image {
+        DynamicImage::ImageRgb8(img) => DynamicImage::ImageRgb8(
+            image::RgbImage::from_raw(out_w, out_h, box_shrink_raw::<3>(&img, w, k)).unwrap(),
+        ),
+        other => DynamicImage::ImageRgba8(
+            image::RgbaImage::from_raw(out_w, out_h, box_shrink_raw::<4>(&other.to_rgba8(), w, k))
+                .unwrap(),
+        ),
+    }
+}
+
+/// C チャンネル 8bit の生データを k x k 平均で縮める
+fn box_shrink_raw<const C: usize>(src: &[u8], width: u32, k: u32) -> Vec<u8> {
+    let (k, src_w) = (k as usize, width as usize);
+    let out_w = src_w / k;
+    let area = (k * k) as u32;
+    let mut out = Vec::with_capacity(out_w * (src.len() / (src_w * C * k)) * C);
+    let mut sums = vec![[0u32; C]; out_w];
+    for rows in src.chunks_exact(src_w * C * k) {
+        sums.fill([0; C]);
+        for row in rows.chunks_exact(src_w * C) {
+            for (sum, block) in sums.iter_mut().zip(row.chunks_exact(k * C)) {
+                for pixel in block.as_chunks::<C>().0 {
+                    for (s, &v) in sum.iter_mut().zip(pixel) {
+                        *s += u32::from(v);
+                    }
+                }
+            }
+        }
+        out.extend(
+            sums.iter()
+                .flatten()
+                .map(|&s| ((s + area / 2) / area) as u8),
+        );
+    }
+    out
 }
 
 fn apply_transport_limit(
@@ -88,7 +134,7 @@ fn apply_transport_limit(
 }
 
 /// 画像の差分描画に常にペイロードハッシュを利用するモードかどうかを判定する関数
-pub(super) fn effective_transport_mode(
+fn effective_transport_mode(
     configured_mode: TransportMode,
     source_dims: (u32, u32),
     image_width_limit: u32,
@@ -114,7 +160,7 @@ fn image_pixel_count(image_dimensions: (u32, u32)) -> u64 {
 }
 
 /// 画像のピクセル数が一定以下であればRGBAフレームをデコードして差分描画に利用する。大きな画像は常にペイロードハッシュを利用して差分描画する。
-pub(super) fn should_decode_rgba_frame(
+fn should_decode_rgba_frame(
     image_dimensions: (u32, u32),
     diff_mode: crate::model::config::ImageDiffMode,
 ) -> bool {
@@ -141,47 +187,6 @@ fn image_metadata_hash(image_path: &Path, image_dimensions: (u32, u32)) -> u64 {
     hasher.finish()
 }
 
-/// 画像メタデータハッシュを読み込む関数。キャッシュがあればキャッシュを優先する。
-pub(super) fn load_metadata_hash(
-    index: usize,
-    image_path: &Path,
-    image_dimensions: (u32, u32),
-    state: &mut ViewerState,
-) -> u64 {
-    if let Some(cached) = state
-        .cache
-        .entry(index)
-        .and_then(|entry| entry.metadata_hash)
-    {
-        return cached;
-    }
-
-    let hash = image_metadata_hash(image_path, image_dimensions);
-    state.cache.entry_mut(index).metadata_hash = Some(hash);
-    hash
-}
-
-/// ペイロードハッシュを読み込む関数。キャッシュがあればキャッシュを優先する。
-pub(super) fn load_payload_hash(
-    index: usize,
-    image_path: &Path,
-    _image_data: &[u8],
-    image_dimensions: (u32, u32),
-    state: &mut ViewerState,
-) -> u64 {
-    if let Some(cached) = state
-        .cache
-        .entry(index)
-        .and_then(|entry| entry.payload_hash)
-    {
-        return cached;
-    }
-
-    let hash = load_metadata_hash(index, image_path, image_dimensions, state);
-    state.cache.entry_mut(index).payload_hash = Some(hash);
-    hash
-}
-
 #[derive(Debug, Clone)]
 pub(super) struct PreparedImagePayload {
     pub(super) image_data: Arc<[u8]>,
@@ -204,7 +209,7 @@ pub(super) fn prepare_image_payload(
     file_width_limit: u32,
     file_height_limit: u32,
     allow_rgba_decode: bool,
-    cached_payload_hash: Option<u64>,
+    render_scale: u32,
 ) -> Result<PreparedImagePayload> {
     let started = Instant::now();
     let source_dims = ::image::image_dimensions(image_path).unwrap_or((1, 1));
@@ -214,7 +219,11 @@ pub(super) fn prepare_image_payload(
         file_width_limit,
         file_height_limit,
     );
-    let (base_max_w, base_max_h) = terminal_pixel_limit();
+    let (base_max_w, base_max_h) = scaled_limit(
+        terminal_pixel_limit(),
+        render_scale,
+        (file_width_limit, file_height_limit),
+    );
     let (max_w, max_h) = apply_transport_limit(
         base_max_w,
         base_max_h,
@@ -282,28 +291,22 @@ pub(super) fn prepare_image_payload(
             (Arc::from(png_bytes), resized_dims, rgba_frame, false)
         }
     } else {
-        let image_data: Arc<[u8]> = Arc::from(bytes.clone());
         let rgba_frame = if allow_rgba_decode && should_decode_rgba_frame(source_dims, diff_mode) {
             render_image::decode_rgba_payload(&bytes)
         } else {
             None
         };
-        (image_data, source_dims, rgba_frame, false)
+        (Arc::from(bytes), source_dims, rgba_frame, false)
     };
 
     let encoded_payload = Arc::<str>::from(general_purpose::STANDARD.encode(image_data.as_ref()));
     let requested_transport = render_image::resolve_transport_mode(transport_mode);
     let prepared_upload_payload = match requested_transport {
-        render_image::ResolvedTransport::File | render_image::ResolvedTransport::TempFile => {
-            Some(prepare_upload_payload_offthread(
-                requested_transport,
-                encoded_payload.as_ref(),
-                image_data.as_ref(),
-            ))
-        }
+        // file/temp_file はここでは書き出さず、転送直前に描画側で書く。
+        // 先読みや準備済みキャッシュが同じファイルを上書きし、別の画像が表示されるのを防ぐ。
         render_image::ResolvedTransport::Direct if is_raw_rgba_direct => Some(UploadPayload {
             transport: render_image::ResolvedTransport::Direct,
-            payload: encoded_payload.as_ref().to_string(),
+            payload: encoded_payload.clone(),
             data_size: image_data.len(),
             pixel_format: UploadPixelFormat::Rgba,
             pixel_width: image_dimensions.0,
@@ -312,8 +315,7 @@ pub(super) fn prepare_image_payload(
         _ => None,
     };
 
-    let payload_hash =
-        cached_payload_hash.unwrap_or_else(|| image_metadata_hash(image_path, image_dimensions));
+    let payload_hash = image_metadata_hash(image_path, image_dimensions);
 
     Ok(PreparedImagePayload {
         image_data,
@@ -328,115 +330,42 @@ pub(super) fn prepare_image_payload(
     })
 }
 
-/// 画像データを読み込む関数。キャッシュが有効な場合はキャッシュを優先する。
-pub(super) fn load_image_data(
-    image_files: &[PathBuf],
-    index: usize,
-    state: &mut ViewerState,
-) -> Result<Arc<[u8]>> {
-    if !state.cache.image_cache.enabled() {
-        let bytes = std::fs::read(&image_files[index])?;
-        return Ok(Arc::from(bytes));
-    }
-
-    if let Some(cached) = state.cache.image_cache.get(index) {
-        state.perf.cache_requests = state.perf.cache_requests.saturating_add(1);
-        state.perf.cache_hits = state.perf.cache_hits.saturating_add(1);
-        return Ok(cached);
-    }
-
-    state.perf.cache_requests = state.perf.cache_requests.saturating_add(1);
-    let data: Arc<[u8]> = Arc::from(std::fs::read(&image_files[index])?);
-    state.cache.image_cache.insert(index, data.clone());
-    Ok(data)
-}
-
-/// 画像の幅と高さを読み込む関数。キャッシュがあればキャッシュを優先する。
-pub(super) fn load_image_dimensions(
-    image_files: &[PathBuf],
-    index: usize,
-    state: &mut ViewerState,
-) -> Result<(u32, u32)> {
-    if let Some(dims) = state
-        .cache
-        .entry(index)
-        .and_then(|entry| entry.image_dimensions)
-    {
-        return Ok(dims);
-    }
-
-    let dims = ::image::image_dimensions(&image_files[index])?;
-    state.cache.entry_mut(index).image_dimensions = Some(dims);
-    Ok(dims)
-}
-
 /// 画像差分モードに応じて常にアップロードモードかどうかを判定する関数
 pub(super) fn is_always_upload_mode(diff_mode: crate::model::config::ImageDiffMode) -> bool {
     matches!(diff_mode, crate::model::config::ImageDiffMode::All)
 }
 
-/// 画像データをBase64エンコードして返す関数。キャッシュがあればキャッシュを優先する。
-pub(super) fn load_encoded_payload(image_data: &[u8]) -> Arc<str> {
-    Arc::<str>::from(general_purpose::STANDARD.encode(image_data))
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-/// RGBAフレームを取得する関数。キャッシュがあればキャッシュを優先する。
-pub(super) fn load_rgba_frame(
-    index: usize,
-    image_data: &[u8],
-    state: &mut ViewerState,
-) -> Option<RgbaFrame> {
-    if state.cache.image_cache.enabled()
-        && let Some(cached) = state
-            .cache
-            .entry(index)
-            .and_then(|entry| entry.rgba_frame.as_ref())
-    {
-        return Some(cached.clone());
+    #[test]
+    fn box_shrink_averages_blocks() {
+        // 4x2 の RGB を 2 倍縮小 → 左右それぞれ 2x2 ブロックの平均（端数は四捨五入）
+        let px = |v: u8| [v, v, 255 - v];
+        let raw: Vec<u8> = [0, 10, 100, 200, 20, 31, 100, 200, 9, 9]
+            .into_iter()
+            .take(8)
+            .flat_map(px)
+            .collect();
+        let img = DynamicImage::ImageRgb8(image::RgbImage::from_raw(4, 2, raw).unwrap());
+        let out = box_shrink(img, 2).to_rgb8();
+        assert_eq!(out.dimensions(), (2, 1));
+        assert_eq!(out.get_pixel(0, 0).0, [15, 15, 240]); // (0+10+20+31)/4 = 15.25
+        assert_eq!(out.get_pixel(1, 0).0, [150, 150, 105]);
+        // 大きな縮小でも最終サイズはフィルタ指定どおり
+        let big = DynamicImage::ImageRgba8(image::RgbaImage::new(4000, 3000));
+        let resized = resize_for_terminal(big, 960, 608, FilterType::Triangle);
+        assert_eq!(resized.dimensions(), (811, 608));
     }
 
-    let decoded = render_image::decode_rgba_payload(image_data)?;
-    if state.cache.image_cache.enabled() {
-        state.cache.entry_mut(index).rgba_frame = Some(decoded.clone());
+    #[test]
+    fn scaled_limit_grows_with_zoom_up_to_cap() {
+        assert_eq!(scaled_limit((960, 600), 1, (5120, 2880)), (960, 600));
+        assert_eq!(scaled_limit((960, 600), 4, (5120, 2880)), (3840, 2400));
+        assert_eq!(scaled_limit((960, 600), 8, (5120, 2880)), (5120, 2880));
+        assert_eq!(scaled_limit((960, 600), 8, (0, 0)), (7680, 4800));
+        // 上限が画面より小さくても画面サイズは下回らない
+        assert_eq!(scaled_limit((960, 600), 2, (100, 100)), (960, 600));
     }
-    Some(decoded)
-}
-
-/// 隣接画像を先読みする関数
-pub(super) fn prefetch_neighbors(
-    image_files: &[PathBuf],
-    current_index: usize,
-    state: &mut ViewerState,
-    max_steps: usize,
-) {
-    if !state.cache.image_cache.enabled() || max_steps == 0 || image_files.len() < 2 {
-        return;
-    }
-
-    if let Some((anchor_index, anchor_direction, anchor_depth)) = state.preview.last_prefetch_state
-        && anchor_index == current_index
-        && anchor_direction == state.last_nav_direction
-        && anchor_depth >= max_steps
-    {
-        return;
-    }
-
-    let len = image_files.len();
-    for step in 1..=max_steps {
-        let step_mod = step % len;
-        let primary = match state.last_nav_direction {
-            NavDirection::Forward => (current_index + step_mod) % len,
-            NavDirection::Backward => (current_index + len - step_mod) % len,
-        };
-
-        if primary == current_index || state.cache.image_cache.contains(primary) {
-            continue;
-        }
-
-        if let Ok(data) = std::fs::read(&image_files[primary]).map(Arc::from) {
-            state.cache.image_cache.insert(primary, data);
-        }
-    }
-
-    state.preview.last_prefetch_state = Some((current_index, state.last_nav_direction, max_steps));
 }

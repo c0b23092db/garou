@@ -9,7 +9,7 @@ use crossterm::{
 use std::{
     io::{self, Write},
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 pub mod filetree;
@@ -23,8 +23,8 @@ use self::{
     filetree::{FileTreeEntry, render_filetree},
     header::render_header,
     image::{
-        ImageRenderMetrics, ImageRenderParams, ImageRenderState, RgbaFrame, UploadPayload,
-        render_image, send_delete,
+        ImageRenderMetrics, ImageRenderParams, ImageRenderState, Placement, RgbaFrame,
+        UploadPayload, render_image, render_placement, send_delete,
     },
     message::{render_image_message_center, render_image_message_top_left},
     overlay::{build_overlay_info, render_overlay},
@@ -36,7 +36,7 @@ use self::{
 pub struct FrameRenderMetrics {
     pub render_duration: Duration,
     pub dirty_tiles: Option<usize>,
-    pub placement: (u16, u16, u32, u32),
+    pub placement: Placement,
 }
 
 /// 描画に必要な入力データを管理する構造体
@@ -87,10 +87,6 @@ pub struct RenderOptions {
     pub diff_mode: ImageDiffMode,
     /// 画像の幅と高さ
     pub image_dimensions: (u32, u32),
-    /// Kitty Graphics Protocol で使用する image ID
-    pub image_id: u32,
-    /// index + payload_hash がIDキャッシュに存在するか
-    pub id_cache_hit: bool,
     /// 元画像の幅と高さ（前処理前）
     pub source_dimensions: (u32, u32),
     /// 画像データのハッシュ値（描画の差分検出に使用）
@@ -109,10 +105,8 @@ pub struct RenderOptions {
     pub skip_step: u32,
     /// 画像表示ズーム倍率 (fit=1.0)
     pub zoom_factor: f32,
-    /// 水平方向パン（セル単位）
-    pub pan_x: i16,
-    /// 垂直方向パン（セル単位）
-    pub pan_y: i16,
+    /// 拡大時に表示する中心（画像に対する正規化座標）
+    pub pan_center: (f32, f32),
     /// デコード済みRGBAフレーム（キャッシュ）
     pub rgba_frame: Option<RgbaFrame>,
     /// 画像情報オーバーレイの表示フラグ
@@ -123,6 +117,117 @@ pub struct RenderOptions {
     pub processing_duration: Duration,
 }
 
+/// 起動時に CSI 16 t で問い合わせたセルのピクセルサイズ
+static QUERIED_CELL_PIXEL_SIZE: OnceLock<(u32, u32)> = OnceLock::new();
+
+/// OS からセルのピクセルサイズを得る（Windows では crossterm が未対応のため None）
+fn window_cell_pixel_size() -> Option<(u32, u32)> {
+    let size = crossterm::terminal::window_size().ok()?;
+    if size.columns == 0 || size.rows == 0 {
+        return None;
+    }
+    let width = u32::from(size.width) / u32::from(size.columns);
+    let height = u32::from(size.height) / u32::from(size.rows);
+    (width > 0 && height > 0).then_some((width, height))
+}
+
+/// 端末1セルのピクセルサイズ (幅, 高さ)。
+/// OS → 起動時の問い合わせ結果 → 8x16 の順に使う。
+pub fn cell_pixel_size() -> (u32, u32) {
+    window_cell_pixel_size()
+        .or_else(|| QUERIED_CELL_PIXEL_SIZE.get().copied())
+        .unwrap_or((8, 16))
+}
+
+/// OS から取れない場合（Windows）に、端末へ CSI 16 t で問い合わせて結果を覚える。
+/// raw mode 有効化後・イベントループ開始前に呼ぶ。応答がなければ短時間で諦める。
+pub fn detect_cell_pixel_size(stdout: &mut io::Stdout) -> Result<()> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+    use std::time::Instant;
+
+    if window_cell_pixel_size().is_some() {
+        return Ok(());
+    }
+    write!(stdout, "\x1b[16t")?;
+    stdout.flush()?;
+
+    // 応答 (ESC [ 6 ; 高さ ; 幅 t) は Windows ではキー入力として届く
+    let deadline = Instant::now() + Duration::from_millis(150);
+    let mut reply = String::new();
+    while let Some(remaining) = deadline.checked_duration_since(Instant::now())
+        && event::poll(remaining)?
+    {
+        if let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+            && let KeyCode::Char(c) = key.code
+        {
+            reply.push(c);
+            if c == 't' {
+                break;
+            }
+        }
+    }
+    if let Some(size) = parse_cell_size_reply(&reply) {
+        let _ = QUERIED_CELL_PIXEL_SIZE.set(size);
+    }
+    Ok(())
+}
+
+/// "[6;高さ;幅t" を含む応答から (幅, 高さ) を取り出す
+fn parse_cell_size_reply(reply: &str) -> Option<(u32, u32)> {
+    let body = reply.split_once("[6;")?.1;
+    let (height, rest) = body.split_once(';')?;
+    let width = rest.split_once('t')?.0;
+    let (width, height) = (width.parse().ok()?, height.parse().ok()?);
+    (width > 0 && height > 0).then_some((width, height))
+}
+
+/// 画像表示領域 (start_x, 幅, 高さ) を求める
+fn image_area(
+    term_width: u32,
+    term_height: u32,
+    sidebar_visible: bool,
+    sidebar_size: u16,
+) -> (u16, u32, u32) {
+    let start_x = if sidebar_visible {
+        sidebar_size.max(1)
+    } else {
+        0
+    };
+    (
+        start_x,
+        term_width.saturating_sub(u32::from(start_x)),
+        term_height.saturating_sub(2),
+    )
+}
+
+/// ズーム・パン後に画像の配置だけを更新する関数。転送済み画像がなければ None
+pub fn render_image_placement(
+    stdout: &mut io::Stdout,
+    (term_width, term_height): (u16, u16),
+    sidebar_visible: bool,
+    sidebar_size: u16,
+    zoom_factor: f32,
+    pan_center: (f32, f32),
+    image_render_state: &mut ImageRenderState,
+) -> Result<Option<Placement>> {
+    let (start_x, available_width, available_height) = image_area(
+        u32::from(term_width),
+        u32::from(term_height),
+        sidebar_visible,
+        sidebar_size,
+    );
+    render_placement(
+        stdout,
+        image_render_state,
+        available_width,
+        available_height,
+        start_x,
+        zoom_factor,
+        pan_center,
+    )
+}
+
 /// 画面全体を描画する関数
 pub fn render_frame(
     stdout: &mut io::Stdout,
@@ -130,13 +235,11 @@ pub fn render_frame(
     options: RenderOptions,
     image_render_state: &mut ImageRenderState,
 ) -> Result<FrameRenderMetrics> {
-    const CELL_PIXEL_WIDTH: u32 = 8;
-    const CELL_PIXEL_HEIGHT: u32 = 16;
-
-    let placement_to_pixel_size = |placement: (u16, u16, u32, u32)| -> (u32, u32) {
+    let (cell_width, cell_height) = cell_pixel_size();
+    let placement_to_pixel_size = |placement: Placement| -> (u32, u32) {
         (
-            placement.2.saturating_mul(CELL_PIXEL_WIDTH),
-            placement.3.saturating_mul(CELL_PIXEL_HEIGHT),
+            placement.cols.saturating_mul(cell_width),
+            placement.rows.saturating_mul(cell_height),
         )
     };
 
@@ -160,15 +263,12 @@ pub fn render_frame(
         queue!(stdout, MoveTo(0, 0), Clear(ClearType::CurrentLine))?;
     }
 
-    let mut image_start_x = 0u16;
-    let mut available_width = term_width;
-    if options.sidebar_visible {
-        let sidebar_width = options.sidebar_size.max(1);
-        image_start_x = sidebar_width;
-        available_width = term_width.saturating_sub(sidebar_width as u32);
-    }
-
-    let available_height = term_height.saturating_sub(2);
+    let (image_start_x, available_width, available_height) = image_area(
+        term_width,
+        term_height,
+        options.sidebar_visible,
+        options.sidebar_size,
+    );
     let is_image_size_limit_error = options
         .status_message
         .as_deref()
@@ -176,8 +276,8 @@ pub fn render_frame(
 
     let render_metrics = if options.skip_image {
         if is_image_size_limit_error || !options.preserve_image {
-            if let Some(active_id) = image_render_state.active_image_id() {
-                send_delete(stdout, active_id)?;
+            if image_render_state.has_image() {
+                send_delete(stdout)?;
             }
             image_render_state.reset_upload_state();
             queue!(
@@ -190,7 +290,11 @@ pub fn render_frame(
         ImageRenderMetrics {
             render_duration: Duration::ZERO,
             dirty_tiles: None,
-            placement: (image_start_x, 1, 0, 0),
+            placement: Placement {
+                x: image_start_x,
+                y: 1,
+                ..Placement::default()
+            },
         }
     } else {
         render_image(
@@ -204,8 +308,6 @@ pub fn render_frame(
                 transport_mode: options.transport_mode,
                 diff_mode: options.diff_mode,
                 image_dimensions: options.image_dimensions,
-                image_id: options.image_id,
-                id_cache_hit: options.id_cache_hit,
                 payload_hash: options.payload_hash,
                 image_data: options.image_data,
                 encoded_payload: options.encoded_payload,
@@ -215,8 +317,7 @@ pub fn render_frame(
                 tile_grid: options.tile_grid,
                 skip_step: options.skip_step,
                 zoom_factor: options.zoom_factor,
-                pan_x: options.pan_x,
-                pan_y: options.pan_y,
+                pan_center: options.pan_center,
                 rgba_frame: options.rgba_frame,
             },
         )?
@@ -332,4 +433,18 @@ pub fn render_header_only(stdout: &mut io::Stdout, input: HeaderRenderInput<'_>)
     }
     stdout.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_cell_size_reply;
+
+    #[test]
+    fn parses_cell_size_reply() {
+        assert_eq!(parse_cell_size_reply("\u{1b}[6;19;9t"), Some((9, 19)));
+        assert_eq!(parse_cell_size_reply("[6;32;16t"), Some((16, 32)));
+        assert_eq!(parse_cell_size_reply("[6;0;9t"), None);
+        assert_eq!(parse_cell_size_reply("[6;19"), None);
+        assert_eq!(parse_cell_size_reply(""), None);
+    }
 }

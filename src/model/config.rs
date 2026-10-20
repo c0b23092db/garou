@@ -8,159 +8,86 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use super::keymap::KeyMap;
+
+/// 既定の設定（config/config.toml を埋め込む）
+const DEFAULT_CONFIG: &str = include_str!("../../config/config.toml");
+
 /// アプリケーションの設定を管理する構造体と、その関連関数
 #[derive(Debug, Clone, Deserialize)]
 struct RawConfig {
-    #[serde(default)]
     cache: CacheConfig,
-    #[serde(default)]
     display: DisplayConfig,
-    #[serde(default)]
     image: ImageConfig,
 }
 
 /// 画像の差分表示モードを表す列挙型、アプリケーションの設定を管理する構造体
 #[derive(Debug, Clone, Deserialize)]
 pub struct ImageConfig {
-    #[serde(default)]
     pub diff_mode: ImageDiffMode,
-    #[serde(default)]
     pub transport_mode: TransportMode,
-    #[serde(default = "default_dirty_ratio")]
     pub dirty_ratio: f32,
-    #[serde(default = "default_tile_grid")]
     pub tile_grid: u32,
-    #[serde(default = "default_skip_step")]
     pub skip_step: u32,
-    #[serde(default = "default_image_extensions")]
     pub extensions: Vec<String>,
-    #[serde(default = "default_image_width")]
     pub image_width: u32,
-    #[serde(default = "default_image_height")]
     pub image_height: u32,
-    #[serde(default, alias = "image_filtertype")]
+    #[serde(alias = "image_filtertype")]
     pub filter_type: ImageFilterType,
-}
-
-impl Default for ImageConfig {
-    fn default() -> Self {
-        Self {
-            diff_mode: ImageDiffMode::All,
-            transport_mode: TransportMode::Auto,
-            dirty_ratio: default_dirty_ratio(),
-            tile_grid: default_tile_grid(),
-            skip_step: default_skip_step(),
-            extensions: default_image_extensions(),
-            image_width: default_image_width(),
-            image_height: default_image_height(),
-            filter_type: ImageFilterType::Nearest,
-        }
-    }
 }
 
 /// アプリケーションの設定を管理する構造体
 #[derive(Debug, Clone, Deserialize)]
 pub struct CacheConfig {
-    #[serde(default = "default_cache_lru_size")]
     pub lru_size: usize,
-    #[serde(default = "default_cache_max_bytes")]
     pub max_bytes: usize,
-    #[serde(default = "default_prefetch_size")]
     pub prefetch_size: usize,
-}
-
-impl Default for CacheConfig {
-    fn default() -> Self {
-        Self {
-            lru_size: default_cache_lru_size(),
-            max_bytes: default_cache_max_bytes(),
-            prefetch_size: default_prefetch_size(),
-        }
-    }
 }
 
 /// アプリケーションの設定を管理する構造体
 #[derive(Debug, Clone, Deserialize)]
 pub struct DisplayConfig {
-    #[serde(default = "default_true")]
     pub sidebar: bool,
-    #[serde(default = "default_true")]
     pub header: bool,
-    #[serde(default = "default_true")]
     pub statusbar: bool,
-    #[serde(default = "default_sidebar_size")]
     pub sidebar_size: u16,
     /// プレビュー表示のデバウンス時間 (ms)
-    #[serde(default = "default_preview_debounce")]
     pub preview_debounce: u64,
     /// アイドル状態のポーリング間隔 (ms)
-    #[serde(default = "default_poll_interval")]
     pub poll_interval: u64,
     /// アイドル状態の先読み間隔 (ms)
-    #[serde(default = "default_prefetch_interval")]
     pub prefetch_interval: u64,
-    #[serde(
-        default = "default_header_bg_color",
-        deserialize_with = "deserialize_color"
-    )]
+    #[serde(deserialize_with = "deserialize_color")]
     pub header_bg_color: Color,
-    #[serde(
-        default = "default_header_fg_color",
-        deserialize_with = "deserialize_color"
-    )]
+    #[serde(deserialize_with = "deserialize_color")]
     pub header_fg_color: Color,
-    #[serde(
-        default = "default_statusbar_bg_color",
-        deserialize_with = "deserialize_color"
-    )]
+    #[serde(deserialize_with = "deserialize_color")]
     pub statusbar_bg_color: Color,
-    #[serde(
-        default = "default_statusbar_fg_color",
-        deserialize_with = "deserialize_color"
-    )]
+    #[serde(deserialize_with = "deserialize_color")]
     pub statusbar_fg_color: Color,
 }
 
-impl Default for DisplayConfig {
-    fn default() -> Self {
-        Self {
-            sidebar: default_true(),
-            header: default_true(),
-            statusbar: default_true(),
-            sidebar_size: default_sidebar_size(),
-            preview_debounce: default_preview_debounce(),
-            poll_interval: default_poll_interval(),
-            prefetch_interval: default_prefetch_interval(),
-            header_bg_color: default_header_bg_color(),
-            header_fg_color: default_header_fg_color(),
-            statusbar_bg_color: default_statusbar_bg_color(),
-            statusbar_fg_color: default_statusbar_fg_color(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct AppConfig {
     pub cache: CacheConfig,
     pub display: DisplayConfig,
     pub image: ImageConfig,
+    pub keys: KeyMap,
 }
 
 /// 画像の差分表示モードを表す列挙型
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 pub enum ImageDiffMode {
     All,
-    #[default]
     Full,
     Half,
 }
 
 /// Kitty Graphics Protocol の転送モードを表す列挙型
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TransportMode {
     /// 実行環境に応じて転送モードを選択する
-    #[default]
     Auto,
     /// t=d: payload を直接送信する
     #[serde(alias = "d")]
@@ -177,9 +104,8 @@ pub enum TransportMode {
 }
 
 /// 画像リサイズ時の補間フィルタ
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 pub enum ImageFilterType {
-    #[default]
     Nearest,
     Triangle,
     CatmullRom,
@@ -201,95 +127,50 @@ impl ImageFilterType {
 
 /// アプリケーションの設定を管理する構造体と、その関連関数
 impl AppConfig {
-    /// 設定ファイルからアプリケーションの設定を読み込む関数
+    /// ~/.config/garou/ の config.toml と keymap.toml を読み込む関数
     pub fn load() -> Result<Self> {
-        let config_path = home_dir()
+        let dir = home_dir()
             .unwrap_or_else(|| PathBuf::from("~"))
             .join(".config")
-            .join("garou")
-            .join("config.toml");
-        Self::load_from_path(&config_path)
+            .join("garou");
+        let mut config = Self::load_from_path(&dir.join("config.toml"))?;
+        config.keys = KeyMap::load_from_path(&dir.join("keymap.toml"))?;
+        Ok(config)
     }
 
-    /// 指定されたパスからアプリケーションの設定を読み込む関数
+    /// 指定されたパスから設定を読み込む関数（キーマップは既定値）。ファイルがなければ既定値
     pub fn load_from_path(path: &Path) -> Result<Self> {
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-
-        let content = fs::read_to_string(path)
-            .with_context(|| format!("failed to read config file: {}", path.display()))?;
-        let raw: RawConfig = toml::from_str(&content)
+        let content = if path.exists() {
+            fs::read_to_string(path)
+                .with_context(|| format!("failed to read config file: {}", path.display()))?
+        } else {
+            String::new()
+        };
+        let raw = parse_config(&content)
             .with_context(|| format!("failed to parse config file: {}", path.display()))?;
 
         Ok(Self {
             cache: raw.cache,
             display: raw.display,
             image: raw.image,
+            keys: KeyMap::default(),
         })
     }
 }
 
-fn default_true() -> bool {
-    true
-}
-
-fn default_preview_debounce() -> u64 {
-    100
-}
-
-fn default_poll_interval() -> u64 {
-    10
-}
-
-fn default_prefetch_interval() -> u64 {
-    100
-}
-
-fn default_dirty_ratio() -> f32 {
-    0.10
-}
-
-fn default_tile_grid() -> u32 {
-    32
-}
-
-fn default_skip_step() -> u32 {
-    1
-}
-
-fn default_sidebar_size() -> u16 {
-    20
-}
-
-fn default_header_bg_color() -> Color {
-    Color::DarkBlue
-}
-fn default_header_fg_color() -> Color {
-    Color::White
-}
-fn default_statusbar_bg_color() -> Color {
-    Color::DarkGrey
-}
-fn default_statusbar_fg_color() -> Color {
-    Color::White
-}
-
-fn default_image_width() -> u32 {
-    5120
-}
-fn default_image_height() -> u32 {
-    2880
-}
-
-fn default_cache_lru_size() -> usize {
-    10
-}
-fn default_prefetch_size() -> usize {
-    1
-}
-fn default_cache_max_bytes() -> usize {
-    256 * 1024 * 1024
+/// 既定値に設定を上書きして読み込む。書いた項目だけがセクション内で既定値を置き換える
+fn parse_config(content: &str) -> Result<RawConfig> {
+    let mut merged: toml::Table = toml::from_str(DEFAULT_CONFIG)?;
+    let overrides: toml::Table = toml::from_str(content)?;
+    for (key, value) in overrides {
+        match (merged.get_mut(&key).and_then(toml::Value::as_table_mut), value) {
+            (Some(base), toml::Value::Table(section)) => base.extend(section),
+            (_, value) => {
+                merged.insert(key, value);
+            }
+        }
+    }
+    Ok(merged.try_into()?)
 }
 
 /// 色指定の文字列を解析して `Color` 型に変換する関数
@@ -386,10 +267,23 @@ fn parse_rgb_components(text: &str) -> Option<Color> {
     Some(Color::Rgb { r, g, b })
 }
 
-/// デフォルトでサポートする画像拡張子のリストを返す関数
-fn default_image_extensions() -> Vec<String> {
-    ["png", "jpg", "jpeg", "gif", "webp", "bmp"]
-        .iter()
-        .map(|ext| ext.to_string())
-        .collect()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_config_is_valid() {
+        let raw = parse_config("").unwrap();
+        assert_eq!(raw.image.diff_mode, ImageDiffMode::All);
+        assert_eq!(raw.cache.max_bytes, 256 * 1024 * 1024);
+        assert_eq!(raw.display.header_bg_color, Color::DarkBlue);
+    }
+
+    #[test]
+    fn overrides_keep_other_defaults_in_section() {
+        let raw = parse_config("[image]\ntransport_mode = \"f\"\n").unwrap();
+        assert_eq!(raw.image.transport_mode, TransportMode::File);
+        assert_eq!(raw.image.tile_grid, 32);
+        assert_eq!(raw.cache.lru_size, 10);
+    }
 }

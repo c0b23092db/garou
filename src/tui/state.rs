@@ -1,9 +1,11 @@
 use crossterm::style::Color;
-use std::{collections::HashMap, time::Duration, time::Instant};
+use std::{collections::HashSet, path::PathBuf, time::Duration, time::Instant};
 
 use crate::model::config::{ImageDiffMode, ImageFilterType, TransportMode};
+use crate::model::keymap::KeyMap;
 
 use super::{
+    image_pipeline::PreparedImagePayload,
     render::{filetree::SidebarTree, image::ImageRenderState},
     runtime::ImageCache,
 };
@@ -34,6 +36,7 @@ pub struct ConfigOption {
     pub image_height: u32,
     pub image_filter_type: ImageFilterType,
     pub image_extensions: Vec<String>,
+    pub keymap: KeyMap,
 }
 
 /// 描画モードを表す層挙型
@@ -51,6 +54,8 @@ pub(super) enum RedrawMode {
     ImageRefresh,
     /// 画像の完全再描画
     ImageReplace,
+    /// 転送済み画像の配置のみ更新（ズーム・パン）
+    ImagePlace,
 }
 
 /// ナビゲーションの方向を表す列挙型
@@ -85,55 +90,21 @@ pub(super) struct UiState {
 
 /// キャッシュ層を管理する構造体
 #[derive(Debug)]
-pub(super) struct CacheEntry {
-    pub(super) image_dimensions: Option<(u32, u32)>,
-    pub(super) payload_hash: Option<u64>,
-    pub(super) metadata_hash: Option<u64>,
-    pub(super) rgba_frame: Option<super::render::image::RgbaFrame>,
-    pub(super) kitty_id: Option<(u32, u64)>,
-}
-
-/// キャッシュ層を管理する構造体
-#[derive(Debug)]
 pub(super) struct CacheState {
-    pub(super) image_cache: ImageCache,
-    pub(super) entries: HashMap<usize, CacheEntry>,
-    pub(super) next_kitty_id: u32,
+    /// 描画準備済みの画像（パスで保持するため並べ替えでも消えない。端末サイズ変更で破棄）
+    pub(super) prepared: ImageCache<PathBuf, PreparedImagePayload>,
+    /// ワーカーへ先読みを依頼中のパス
+    pub(super) prefetch_inflight: HashSet<PathBuf>,
+    /// 準備済み画像の世代。端末サイズ変更で進め、古い先読み結果を捨てる
+    pub(super) prepared_epoch: u64,
 }
 
 impl CacheState {
-    pub(super) fn entry(&self, index: usize) -> Option<&CacheEntry> {
-        self.entries.get(&index)
-    }
-
-    pub(super) fn entry_mut(&mut self, index: usize) -> &mut CacheEntry {
-        self.entries.entry(index).or_insert_with(|| CacheEntry {
-            image_dimensions: None,
-            payload_hash: None,
-            metadata_hash: None,
-            rgba_frame: None,
-            kitty_id: None,
-        })
-    }
-
-    pub(super) fn cached_kitty_image_id(&self, index: usize, payload_hash: u64) -> Option<u32> {
-        self.entry(index)
-            .and_then(|entry| entry.kitty_id)
-            .and_then(|(id, hash)| (hash == payload_hash).then_some(id))
-    }
-
-    pub(super) fn ensure_kitty_image_id(&mut self, index: usize, payload_hash: u64) -> (u32, bool) {
-        if let Some(id) = self.cached_kitty_image_id(index, payload_hash) {
-            return (id, true);
-        }
-
-        let mut next = self.next_kitty_id;
-        if next == 0 {
-            next = 1;
-        }
-        self.next_kitty_id = next.wrapping_add(1).max(1);
-        self.entry_mut(index).kitty_id = Some((next, payload_hash));
-        (next, false)
+    /// 端末サイズに依存する準備済み画像を破棄する
+    pub(super) fn invalidate_prepared(&mut self) {
+        self.prepared.clear();
+        self.prefetch_inflight.clear();
+        self.prepared_epoch = self.prepared_epoch.wrapping_add(1);
     }
 }
 
@@ -141,7 +112,6 @@ impl CacheState {
 #[derive(Debug)]
 pub(super) struct PreviewState {
     pub(super) prefetch_size: usize,
-    pub(super) last_prefetch_state: Option<(usize, NavDirection, usize)>,
     /// 最後に発行したプレビュー要求の世代番号
     pub(super) preview_generation: u64,
     /// 現在待機中のプレビュー要求 (index, generation)
@@ -171,10 +141,10 @@ pub(super) struct ImageProcessingConfig {
     pub(super) image_filter_type: ImageFilterType,
     /// 画像表示のズーム倍率 (fit=1.0)
     pub(super) zoom_factor: f32,
-    /// 水平方向パン（セル単位）
-    pub(super) pan_x: i16,
-    /// 垂直方向パン（セル単位）
-    pub(super) pan_y: i16,
+    /// 拡大時に表示する中心（画像に対する正規化座標）
+    pub(super) pan_center: (f32, f32),
+    /// 転送画像の解像度倍率（画面に合わせた大きさの何倍で準備するか）
+    pub(super) render_scale: u32,
 }
 
 /// パフォーマンス統計を管理する構造体
@@ -182,15 +152,12 @@ pub(super) struct ImageProcessingConfig {
 pub(super) struct PerformanceStats {
     pub(super) last_render_duration: Duration,
     pub(super) last_dirty_tiles: Option<usize>,
-    pub(super) last_image_rect: Option<(u16, u16, u32, u32)>,
-    pub(super) cache_requests: u64,
-    pub(super) cache_hits: u64,
+    pub(super) last_image_rect: Option<super::render::image::Placement>,
 }
 
 /// ビューワーの状態を管理する構造体
 pub(super) struct ViewerState {
-    pub(super) pending_replace: bool,
-    /// 画像の差分更新が必要な期限。None の場合は差分更新不要。
+    /// デバウンス中の画像切り替えを実行する期限。None なら保留なし
     pub(super) pending_deadline: Option<Instant>,
     pub(super) ui_state: UiState,
     pub(super) cache: CacheState,
@@ -200,4 +167,34 @@ pub(super) struct ViewerState {
     pub(super) sidebar_tree: SidebarTree,
     pub(super) image_render_state: ImageRenderState,
     pub(super) last_nav_direction: NavDirection,
+    pub(super) keymap: KeyMap,
+    /// 画像ドラッグ中の直前のマウス位置 (列, 行)
+    pub(super) drag_origin: Option<(u16, u16)>,
+    /// 画面下部で受け付けている入力（開いている間はキーマップを使わない）
+    pub(super) prompt: Option<Prompt>,
+}
+
+/// 画面下部の入力欄
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Prompt {
+    /// ごみ箱へ移動する確認
+    ConfirmDelete,
+    /// 新しいファイル名を入力中
+    Rename(String),
+    /// 操作の失敗などを伝える（次のキーで閉じる）
+    Message(String),
+}
+
+impl Prompt {
+    pub(super) fn text(&self, current: Option<&std::path::Path>) -> String {
+        let name = current
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy())
+            .unwrap_or_default();
+        match self {
+            Self::ConfirmDelete => format!("ごみ箱へ移動しますか？ {name} (y/n)"),
+            Self::Rename(input) => format!("新しい名前 (Enter: 確定 / Esc: 取消): {input}_"),
+            Self::Message(message) => message.clone(),
+        }
+    }
 }

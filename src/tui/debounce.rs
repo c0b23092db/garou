@@ -2,19 +2,13 @@ use std::time::{Duration, Instant};
 
 use super::state::ViewerState;
 
-/// スケジュールされた画像置換を実行する
+/// デバウンス後の画像切り替えを予約する（0 なら予約しない）
 pub(super) fn schedule_replace(state: &mut ViewerState, debounce_duration: Duration) {
-    if debounce_duration.is_zero() {
-        state.pending_replace = false;
-        state.pending_deadline = None;
-    } else {
-        state.pending_replace = true;
-        state.pending_deadline = Some(Instant::now() + debounce_duration);
-    }
+    state.pending_deadline =
+        (!debounce_duration.is_zero()).then(|| Instant::now() + debounce_duration);
 }
 
-/// 保留中の画像置換があれば実行する
+/// 予約中の画像切り替えを取り消す
 pub(super) fn clear_pending_replace(state: &mut ViewerState) {
-    state.pending_replace = false;
     state.pending_deadline = None;
 }

@@ -1,33 +1,31 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use std::{path::PathBuf, time::Duration};
 
 use crate::core::SortField;
+use crate::model::keymap::Action;
 
 mod clear;
+mod file_ops;
 mod input_move;
 mod open;
-mod pan;
 mod sort;
 mod zoom;
 
+use super::render::filetree::SidebarTree;
 use super::state::{NavDirection, RedrawMode, ViewerState};
 
 use clear::{clear_and_full_refresh, clear_and_image_refresh};
+use file_ops::{FileOpContext, handle_prompt_key, start_delete, start_rename};
 use input_move::{apply_sidebar_cursor_change, schedule_redraw, sync_sidebar_to_image};
 use open::open_current_image;
-use pan::pan_image;
 use sort::{SortContext, apply_sort};
-use zoom::{fit_image, zoom_in, zoom_out};
+use zoom::{ZOOM_STEP, fit_image, pan_drag, pan_step, zoom_by};
 
 fn is_mouse_on_image(mouse: MouseEvent, state: &ViewerState) -> bool {
-    let Some((x, y, w, h)) = state.perf.last_image_rect else {
-        return false;
-    };
-    let x_end = u32::from(x).saturating_add(w);
-    let y_end = u32::from(y).saturating_add(h);
-    let mx = u32::from(mouse.column);
-    let my = u32::from(mouse.row);
-    mx >= u32::from(x) && mx < x_end && my >= u32::from(y) && my < y_end
+    state
+        .perf
+        .last_image_rect
+        .is_some_and(|p| p.image_point(mouse.column, mouse.row).is_some())
 }
 
 /// キー入力を処理し、必要に応じて描画モードを更新する
@@ -58,360 +56,206 @@ pub fn process_key(key: KeyEvent, ctx: KeyProcessContext<'_>) -> bool {
     if image_count == 0 {
         return false;
     }
+    if state.prompt.is_some() {
+        return handle_prompt_key(
+            key,
+            FileOpContext {
+                image_files,
+                current_index,
+                redraw_mode,
+                state,
+                sort_field: *sort_field,
+                sort_descending: *sort_descending,
+            },
+        );
+    }
+    let Some(action) = state.keymap.action(key) else {
+        return false;
+    };
+
+    let sort = match action {
+        Action::SortModified => Some((SortField::ModifiedTime, false)),
+        Action::SortModifiedDesc => Some((SortField::ModifiedTime, true)),
+        Action::SortNatural => Some((SortField::Natural, false)),
+        Action::SortNaturalDesc => Some((SortField::Natural, true)),
+        Action::SortSize => Some((SortField::Size, false)),
+        Action::SortSizeDesc => Some((SortField::Size, true)),
+        _ => None,
+    };
+    if let Some((field, descending)) = sort {
+        apply_sort(
+            SortContext {
+                image_files,
+                current_index,
+                redraw_mode,
+                state,
+                sort_field,
+                sort_descending,
+            },
+            field,
+            descending,
+        );
+        return false;
+    }
 
     let page_rows = usize::from(term_height.saturating_sub(2)).max(1);
-    match key.code {
-        // q: 終了
-        KeyCode::Char('q') | KeyCode::Esc => true,
-        // o: 既定の画像ビューアで開く
-        KeyCode::Char('o') | KeyCode::Char('O') => {
-            open_current_image(image_files, *current_index);
-            false
+    let last_index = image_count - 1;
+    let sidebar_visible = state.ui_state.sidebar_visible;
+    let mut nav = NavContext {
+        image_files,
+        current_index,
+        redraw_mode,
+        state,
+        debounce_duration,
+    };
+    match action {
+        Action::Quit => return true,
+        Action::Open => open_current_image(nav.image_files, *nav.current_index),
+        Action::Delete => start_delete(nav.redraw_mode, nav.state),
+        Action::Rename => start_rename(
+            nav.image_files,
+            *nav.current_index,
+            nav.redraw_mode,
+            nav.state,
+        ),
+        Action::ToggleSidebar => {
+            nav.state.ui_state.sidebar_visible = !sidebar_visible;
+            clear_and_full_refresh(nav.redraw_mode, nav.state);
         }
-        // Alt+s: サイドバーの表示切替
-        KeyCode::Char('s') | KeyCode::Char('S') if key.modifiers.contains(KeyModifiers::ALT) => {
-            state.ui_state.sidebar_visible = !state.ui_state.sidebar_visible;
-            clear_and_full_refresh(redraw_mode, state);
-            false
+        Action::ToggleStatusbar => {
+            nav.state.ui_state.statusbar_visible = !nav.state.ui_state.statusbar_visible;
+            clear_and_full_refresh(nav.redraw_mode, nav.state);
         }
-        // Alt+d: ステータスバーの表示切替
-        KeyCode::Char('d') | KeyCode::Char('D') if key.modifiers.contains(KeyModifiers::ALT) => {
-            state.ui_state.statusbar_visible = !state.ui_state.statusbar_visible;
-            clear_and_full_refresh(redraw_mode, state);
-            false
+        Action::ToggleHeader => {
+            nav.state.ui_state.header_visible = !nav.state.ui_state.header_visible;
+            clear_and_full_refresh(nav.redraw_mode, nav.state);
         }
-        // Alt+f: ヘッダーの表示切替
-        KeyCode::Char('f') | KeyCode::Char('F') if key.modifiers.contains(KeyModifiers::ALT) => {
-            state.ui_state.header_visible = !state.ui_state.header_visible;
-            clear_and_full_refresh(redraw_mode, state);
-            false
+        Action::ToggleOverlay => {
+            nav.state.ui_state.overlay_visible = !nav.state.ui_state.overlay_visible;
+            clear_and_full_refresh(nav.redraw_mode, nav.state);
         }
-        // r: 画像の再読み込み
-        KeyCode::Char('r') => {
-            clear_and_image_refresh(redraw_mode, state);
-            false
-        }
-        // R: 画面の完全な再描画
-        KeyCode::Char('R') => {
-            clear_and_full_refresh(redraw_mode, state);
-            false
-        }
-        // Tab: 画像情報オーバーレイの表示切替
-        KeyCode::Tab => {
-            state.ui_state.overlay_visible = !state.ui_state.overlay_visible;
-            clear_and_full_refresh(redraw_mode, state);
-            false
-        }
-        /* サイドバーのカーソル移動 */
-        // j/k: サイドバーでのカーソル移動
-        KeyCode::Char('j') | KeyCode::Down if state.ui_state.sidebar_visible => {
-            if state.sidebar_tree.move_cursor(1) {
-                apply_sidebar_cursor_change(current_index, redraw_mode, state, debounce_duration);
+        Action::RefreshImage => clear_and_image_refresh(nav.redraw_mode, nav.state),
+        Action::RefreshScreen => clear_and_full_refresh(nav.redraw_mode, nav.state),
+        // サイドバー非表示時の上下移動は何もしない
+        Action::Up | Action::Down if sidebar_visible => {
+            let delta = if action == Action::Down { 1 } else { -1 };
+            if nav.state.sidebar_tree.move_cursor(delta) {
+                nav.apply_sidebar_cursor_change();
             }
-            false
         }
-        KeyCode::Char('k') | KeyCode::Up if state.ui_state.sidebar_visible => {
-            if state.sidebar_tree.move_cursor(-1) {
-                apply_sidebar_cursor_change(current_index, redraw_mode, state, debounce_duration);
-            }
-            false
+        Action::PageUp => {
+            let target = nav.current_index.saturating_sub(page_rows);
+            nav.jump(
+                |t| t.move_cursor_page(-1, page_rows),
+                target,
+                NavDirection::Backward,
+            );
         }
-        // Ctrl+b: 一ページ前へ移動
-        KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            let moved = if state.ui_state.sidebar_visible {
-                state.sidebar_tree.move_cursor_page(-1, page_rows)
+        Action::PageDown => {
+            let target = (*nav.current_index + page_rows).min(last_index);
+            nav.jump(
+                |t| t.move_cursor_page(1, page_rows),
+                target,
+                NavDirection::Forward,
+            );
+        }
+        Action::First => nav.jump(|t| t.move_to_start(), 0, NavDirection::Backward),
+        Action::Last => nav.jump(|t| t.move_to_end(), last_index, NavDirection::Forward),
+        // ディレクトリの展開/折りたたみ（サイドバー表示時）
+        Action::ToggleDir if sidebar_visible => {
+            if nav.state.sidebar_tree.toggle_current_dir() {
+                *nav.redraw_mode = RedrawMode::HeaderRefresh;
             } else {
-                let old = *current_index;
-                *current_index = current_index.saturating_sub(page_rows);
-                *current_index != old
+                nav.apply_sidebar_cursor_change();
+            }
+        }
+        // サイドバー表示時はディレクトリの折りたたみ/展開、非表示時は画像の前後移動
+        Action::Prev if sidebar_visible => {
+            if nav.state.sidebar_tree.collapse_current_dir() {
+                *nav.redraw_mode = RedrawMode::HeaderRefresh;
+            }
+        }
+        Action::Next if sidebar_visible => {
+            if nav.state.sidebar_tree.expand_current_dir() {
+                *nav.redraw_mode = RedrawMode::HeaderRefresh;
+            }
+        }
+        Action::Prev => {
+            let target = nav.current_index.checked_sub(1).unwrap_or(last_index);
+            nav.step_image(target, NavDirection::Backward);
+        }
+        Action::Next => {
+            let target = if *nav.current_index < last_index {
+                *nav.current_index + 1
+            } else {
+                0
             };
+            nav.step_image(target, NavDirection::Forward);
+        }
+        Action::PanLeft => pan_step(nav.redraw_mode, nav.state, -1.0, 0.0),
+        Action::PanRight => pan_step(nav.redraw_mode, nav.state, 1.0, 0.0),
+        Action::PanUp => pan_step(nav.redraw_mode, nav.state, 0.0, -1.0),
+        Action::PanDown => pan_step(nav.redraw_mode, nav.state, 0.0, 1.0),
+        Action::ZoomIn => zoom_by(
+            nav.redraw_mode,
+            nav.state,
+            ZOOM_STEP,
+            None,
+            debounce_duration,
+        ),
+        Action::ZoomOut => zoom_by(
+            nav.redraw_mode,
+            nav.state,
+            1.0 / ZOOM_STEP,
+            None,
+            debounce_duration,
+        ),
+        Action::ZoomFit => fit_image(nav.redraw_mode, nav.state, debounce_duration),
+        _ => {}
+    }
+    false
+}
 
-            if moved {
-                if state.ui_state.sidebar_visible {
-                    apply_sidebar_cursor_change(
-                        current_index,
-                        redraw_mode,
-                        state,
-                        debounce_duration,
-                    );
-                } else {
-                    sync_sidebar_to_image(
-                        *current_index,
-                        state,
-                        image_files,
-                        NavDirection::Backward,
-                    );
-                    schedule_redraw(redraw_mode, state, debounce_duration);
-                }
-            }
-            false
-        }
-        // Ctrl+f: 一ページ次へ移動
-        KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            let moved = if state.ui_state.sidebar_visible {
-                state.sidebar_tree.move_cursor_page(1, page_rows)
-            } else {
-                let old = *current_index;
-                *current_index = (*current_index + page_rows).min(image_count.saturating_sub(1));
-                *current_index != old
-            };
+/// 画像・サイドバー移動に必要な参照のまとまり
+struct NavContext<'a> {
+    image_files: &'a [PathBuf],
+    current_index: &'a mut usize,
+    redraw_mode: &'a mut RedrawMode,
+    state: &'a mut ViewerState,
+    debounce_duration: Duration,
+}
 
-            if moved {
-                if state.ui_state.sidebar_visible {
-                    apply_sidebar_cursor_change(
-                        current_index,
-                        redraw_mode,
-                        state,
-                        debounce_duration,
-                    );
-                } else {
-                    sync_sidebar_to_image(
-                        *current_index,
-                        state,
-                        image_files,
-                        NavDirection::Forward,
-                    );
-                    schedule_redraw(redraw_mode, state, debounce_duration);
-                }
-            }
-            false
-        }
-        // g: 先頭へ移動
-        KeyCode::Char('g') => {
-            let moved = if state.ui_state.sidebar_visible {
-                state.sidebar_tree.move_to_start()
-            } else {
-                let old = *current_index;
-                *current_index = 0;
-                *current_index != old
-            };
+impl NavContext<'_> {
+    fn apply_sidebar_cursor_change(&mut self) {
+        apply_sidebar_cursor_change(
+            self.current_index,
+            self.redraw_mode,
+            self.state,
+            self.debounce_duration,
+        );
+    }
 
-            if moved {
-                if state.ui_state.sidebar_visible {
-                    apply_sidebar_cursor_change(
-                        current_index,
-                        redraw_mode,
-                        state,
-                        debounce_duration,
-                    );
-                } else {
-                    sync_sidebar_to_image(
-                        *current_index,
-                        state,
-                        image_files,
-                        NavDirection::Backward,
-                    );
-                    schedule_redraw(redraw_mode, state, debounce_duration);
-                }
-            }
-            false
-        }
-        // G: 末尾へ移動
-        KeyCode::Char('G') => {
-            let moved = if state.ui_state.sidebar_visible {
-                state.sidebar_tree.move_to_end()
-            } else {
-                let old = *current_index;
-                *current_index = image_count.saturating_sub(1);
-                *current_index != old
-            };
+    /// 表示画像を target に切り替え、サイドバーを追従させる
+    fn step_image(&mut self, target: usize, direction: NavDirection) {
+        *self.current_index = target;
+        sync_sidebar_to_image(target, self.state, self.image_files, direction);
+        schedule_redraw(self.redraw_mode, self.state, self.debounce_duration);
+    }
 
-            if moved {
-                if state.ui_state.sidebar_visible {
-                    apply_sidebar_cursor_change(
-                        current_index,
-                        redraw_mode,
-                        state,
-                        debounce_duration,
-                    );
-                } else {
-                    sync_sidebar_to_image(
-                        *current_index,
-                        state,
-                        image_files,
-                        NavDirection::Forward,
-                    );
-                    schedule_redraw(redraw_mode, state, debounce_duration);
-                }
+    /// サイドバー表示時はカーソルを `move_sidebar` で、非表示時は画像を target へ移動する
+    fn jump(
+        &mut self,
+        move_sidebar: impl FnOnce(&mut SidebarTree) -> bool,
+        target: usize,
+        direction: NavDirection,
+    ) {
+        if self.state.ui_state.sidebar_visible {
+            if move_sidebar(&mut self.state.sidebar_tree) {
+                self.apply_sidebar_cursor_change();
             }
-            false
+        } else if *self.current_index != target {
+            self.step_image(target, direction);
         }
-        // Enter: ディレクトリの展開/折りたたみ（サイドバー表示時）
-        KeyCode::Enter if state.ui_state.sidebar_visible => {
-            if state.sidebar_tree.toggle_current_dir() {
-                *redraw_mode = RedrawMode::HeaderRefresh;
-                return false;
-            }
-            apply_sidebar_cursor_change(current_index, redraw_mode, state, debounce_duration);
-            false
-        }
-        // h/l: 画像の前後移動（サイドバー非表示時）またはディレクトリの展開/折りたたみ（サイドバー表示時）
-        KeyCode::Char('h') | KeyCode::Left => {
-            if state.ui_state.sidebar_visible {
-                if state.sidebar_tree.collapse_current_dir() {
-                    *redraw_mode = RedrawMode::HeaderRefresh;
-                }
-                return false;
-            }
-
-            state.last_nav_direction = NavDirection::Backward;
-            if *current_index == 0 {
-                *current_index = image_count - 1;
-            } else {
-                *current_index -= 1;
-            }
-            sync_sidebar_to_image(*current_index, state, image_files, NavDirection::Backward);
-            schedule_redraw(redraw_mode, state, debounce_duration);
-            false
-        }
-        KeyCode::Char('l') | KeyCode::Right => {
-            if state.ui_state.sidebar_visible {
-                if state.sidebar_tree.expand_current_dir() {
-                    *redraw_mode = RedrawMode::HeaderRefresh;
-                }
-                return false;
-            }
-
-            state.last_nav_direction = NavDirection::Forward;
-            if *current_index + 1 < image_count {
-                *current_index += 1;
-            } else {
-                *current_index = 0;
-            }
-            sync_sidebar_to_image(*current_index, state, image_files, NavDirection::Forward);
-            schedule_redraw(redraw_mode, state, debounce_duration);
-            false
-        }
-        /* 画像のズーム・パン */
-        KeyCode::Char('H') => {
-            pan_image(redraw_mode, state, -2, 0);
-            false
-        }
-        KeyCode::Char('L') => {
-            pan_image(redraw_mode, state, 2, 0);
-            false
-        }
-        KeyCode::Char('J') => {
-            pan_image(redraw_mode, state, 0, 1);
-            false
-        }
-        KeyCode::Char('K') => {
-            pan_image(redraw_mode, state, 0, -1);
-            false
-        }
-        // +: ズームイン
-        KeyCode::Char('+') => {
-            zoom_in(redraw_mode, state);
-            false
-        }
-        // -: ズームアウト
-        KeyCode::Char('-') => {
-            zoom_out(redraw_mode, state);
-            false
-        }
-        // 0: 画像フィット
-        KeyCode::Char('0') => {
-            fit_image(redraw_mode, state);
-            false
-        }
-        /* ソート */
-        // m: 修正日時
-        KeyCode::Char('m') => {
-            apply_sort(
-                SortContext {
-                    image_files,
-                    current_index,
-                    redraw_mode,
-                    state,
-                    sort_field,
-                    sort_descending,
-                },
-                SortField::ModifiedTime,
-                false,
-            );
-            false
-        }
-        // M: 修正日時（降順）
-        KeyCode::Char('M') => {
-            apply_sort(
-                SortContext {
-                    image_files,
-                    current_index,
-                    redraw_mode,
-                    state,
-                    sort_field,
-                    sort_descending,
-                },
-                SortField::ModifiedTime,
-                true,
-            );
-            false
-        }
-        // n: 自然順
-        KeyCode::Char('n') => {
-            apply_sort(
-                SortContext {
-                    image_files,
-                    current_index,
-                    redraw_mode,
-                    state,
-                    sort_field,
-                    sort_descending,
-                },
-                SortField::Natural,
-                false,
-            );
-            false
-        }
-        // N: 自然順（降順）
-        KeyCode::Char('N') => {
-            apply_sort(
-                SortContext {
-                    image_files,
-                    current_index,
-                    redraw_mode,
-                    state,
-                    sort_field,
-                    sort_descending,
-                },
-                SortField::Natural,
-                true,
-            );
-            false
-        }
-        // s: サイズ
-        KeyCode::Char('s') => {
-            apply_sort(
-                SortContext {
-                    image_files,
-                    current_index,
-                    redraw_mode,
-                    state,
-                    sort_field,
-                    sort_descending,
-                },
-                SortField::Size,
-                false,
-            );
-            false
-        }
-        // S: サイズ（降順）
-        KeyCode::Char('S') => {
-            apply_sort(
-                SortContext {
-                    image_files,
-                    current_index,
-                    redraw_mode,
-                    state,
-                    sort_field,
-                    sort_descending,
-                },
-                SortField::Size,
-                true,
-            );
-            false
-        }
-        _ => false,
     }
 }
 
@@ -422,27 +266,52 @@ pub fn process_mouse(
     redraw_mode: &mut RedrawMode,
     state: &mut ViewerState,
     debounce_duration: Duration,
-    sidebar_width: u16,
     term_height: u16,
-) -> bool {
+) {
     match mouse.kind {
-        MouseEventKind::ScrollUp if is_mouse_on_image(mouse, state) => {
-            zoom_in(redraw_mode, state);
-            return false;
+        // 画像上のホイール: カーソル位置を中心に拡大縮小
+        MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+            if is_mouse_on_image(mouse, state) =>
+        {
+            let factor = if mouse.kind == MouseEventKind::ScrollUp {
+                ZOOM_STEP
+            } else {
+                1.0 / ZOOM_STEP
+            };
+            zoom_by(
+                redraw_mode,
+                state,
+                factor,
+                Some((mouse.column, mouse.row)),
+                debounce_duration,
+            );
+            return;
         }
-        MouseEventKind::ScrollDown if is_mouse_on_image(mouse, state) => {
-            zoom_out(redraw_mode, state);
-            return false;
+        // 画像上で左ボタンを押したらドラッグでパンする
+        MouseEventKind::Down(MouseButton::Left) if is_mouse_on_image(mouse, state) => {
+            state.drag_origin = Some((mouse.column, mouse.row));
+            return;
+        }
+        MouseEventKind::Drag(MouseButton::Left) => {
+            if let Some((col, row)) = state.drag_origin {
+                let dcols = i32::from(mouse.column) - i32::from(col);
+                let drows = i32::from(mouse.row) - i32::from(row);
+                if dcols != 0 || drows != 0 {
+                    pan_drag(redraw_mode, state, dcols, drows);
+                    state.drag_origin = Some((mouse.column, mouse.row));
+                }
+            }
+            return;
+        }
+        MouseEventKind::Up(MouseButton::Left) if state.drag_origin.is_some() => {
+            state.drag_origin = None;
+            return;
         }
         _ => {}
     }
 
-    if !state.ui_state.sidebar_visible {
-        return false;
-    }
-
-    if mouse.column >= sidebar_width {
-        return false;
+    if !state.ui_state.sidebar_visible || mouse.column >= state.ui_state.sidebar_size.max(1) {
+        return;
     }
 
     match mouse.kind {
@@ -450,30 +319,29 @@ pub fn process_mouse(
             if state.sidebar_tree.move_cursor(-1) {
                 apply_sidebar_cursor_change(current_index, redraw_mode, state, debounce_duration);
             }
-            return false;
+            return;
         }
         MouseEventKind::ScrollDown => {
             if state.sidebar_tree.move_cursor(1) {
                 apply_sidebar_cursor_change(current_index, redraw_mode, state, debounce_duration);
             }
-            return false;
+            return;
         }
         MouseEventKind::Down(MouseButton::Left) => {}
-        _ => return false,
+        _ => return,
     }
 
     if !state
         .sidebar_tree
         .set_cursor_by_screen_row(mouse.row, term_height)
     {
-        return false;
+        return;
     }
 
     if state.sidebar_tree.toggle_current_dir() {
         *redraw_mode = RedrawMode::HeaderRefresh;
-        return false;
+        return;
     }
 
     apply_sidebar_cursor_change(current_index, redraw_mode, state, debounce_duration);
-    false
 }

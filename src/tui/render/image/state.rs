@@ -3,7 +3,7 @@
 use crate::model::config::{ImageDiffMode, TransportMode};
 use std::{sync::Arc, time::Duration};
 
-use super::transport::SharedMemoryState;
+use super::{layout::Placement, transport::SharedMemoryState};
 
 /// 差分更新に用いるRGBAフレーム
 #[derive(Debug, Clone)]
@@ -26,8 +26,6 @@ pub struct ImageRenderParams {
     pub transport_mode: TransportMode,
     pub diff_mode: ImageDiffMode,
     pub image_dimensions: (u32, u32),
-    pub image_id: u32,
-    pub id_cache_hit: bool,
     pub payload_hash: u64,
     pub image_data: Arc<[u8]>,
     pub encoded_payload: Arc<str>,
@@ -41,10 +39,8 @@ pub struct ImageRenderParams {
     pub skip_step: u32,
     /// 画像表示ズーム倍率 (fit=1.0)
     pub zoom_factor: f32,
-    /// 水平方向パン（セル単位）
-    pub pan_x: i16,
-    /// 垂直方向パン（セル単位）
-    pub pan_y: i16,
+    /// 拡大時に表示する中心（画像に対する正規化座標）
+    pub pan_center: (f32, f32),
     /// デコード済みRGBAフレーム（キャッシュ）
     pub rgba_frame: Option<RgbaFrame>,
 }
@@ -58,12 +54,10 @@ pub struct ImageRenderState {
     pub(super) last_payload_hash: Option<u64>,
     /// 最後にアップロードした encoded payload のハッシュ値
     pub(super) last_encoded_payload_hash: Option<u64>,
-    /// 最後に配置した画像の位置とサイズ (start_x, start_y, display_width_cells, display_height_cells)
-    pub(super) last_placement: Option<(u16, u16, u32, u32)>,
+    /// 最後に配置した画像の位置・サイズ・切り出し範囲
+    pub(super) last_placement: Option<Placement>,
     /// 最後にアップロード済みの RGBA フレーム（差分更新用）
     pub(super) last_rgba_frame: Option<RgbaFrame>,
-    /// 直近で表示に利用した Kitty image ID
-    pub(super) active_image_id: Option<u32>,
     /// shared memory 転送時に生存期間を管理する保持領域
     pub(super) shared_memory: SharedMemoryState,
 }
@@ -73,7 +67,7 @@ pub struct ImageRenderState {
 pub struct ImageRenderMetrics {
     pub render_duration: Duration,
     pub dirty_tiles: Option<usize>,
-    pub placement: (u16, u16, u32, u32),
+    pub placement: Placement,
 }
 
 impl ImageRenderState {
@@ -87,10 +81,10 @@ impl ImageRenderState {
         self.last_encoded_payload_hash = None;
         self.last_placement = None;
         self.last_rgba_frame = None;
-        self.active_image_id = None;
     }
 
-    pub(crate) fn active_image_id(&self) -> Option<u32> {
-        self.active_image_id
+    /// 端末に転送済みの画像があるか
+    pub(crate) fn has_image(&self) -> bool {
+        self.has_uploaded
     }
 }

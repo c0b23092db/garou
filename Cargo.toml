@@ -1,6 +1,6 @@
 [package]
 name = "garou"
-version = "1.2.0"
+version = "1.4.0"
 description = "TUI: Simple Image Protocol Viewer for Kitty Graphics Protocol"
 keywords = ["tui","viewer","image-viewer","kitty","graphics"]
 categories = ["command-line-utilities", "visualization", "graphics"]
@@ -10,13 +10,13 @@ readme = "README.md"
 authors = ["ikata"]
 repository = "https://github.com/c0b23092db/garou"
 include = [
-  "src/**",
-  "Cargo.toml",
-  "Cargo.lock",
-  "README.md",
-  "README/README-ja.md",
-  "README/png.png",
-  "LICENSE",
+  "/src/**",
+  "/Cargo.toml",
+  "/Cargo.lock",
+  "/config/**",
+  "/README.md",
+  "/README/png.png",
+  "/LICENSE",
 ]
 
 [[bin]]
@@ -34,12 +34,12 @@ panic = "abort"
 anyhow = "1.0"
 clap = { version = "4.6", features = ["derive"] }
 crossterm = "0.29.0"
-base64 = "0.22"
+base64 = "0.23"
 image = "0.25.10"
-smol = "2.0.2"
 toml = "1.1.0"
 serde = { version = "1.0", features = ["derive"] }
 open = "5"
 unicode-width = "0.2"
-dirs = "6"
+dirs = "7"
 libc = "0.2"
+trash = "5.2.9"

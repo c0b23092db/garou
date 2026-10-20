@@ -47,49 +47,12 @@ pub fn render_header(
     header_bg_color: Color,
     header_fg_color: Color,
 ) -> Result<()> {
-    let total_count = image_files.len();
-
     let current_name = image_files
         .get(current_index)
         .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown");
-
-    let prev_index = if total_count == 0 {
-        0
-    } else if current_index == 0 {
-        total_count - 1
-    } else {
-        current_index - 1
-    };
-    let next_index = if total_count == 0 {
-        0
-    } else if current_index + 1 < total_count {
-        current_index + 1
-    } else {
-        0
-    };
-
-    let prev_name = image_files
-        .get(prev_index)
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown");
-
-    let next_name = image_files
-        .get(next_index)
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown");
-
-    let header = format!(
-        " {} <- {} -> {} ({}/{})",
-        prev_name,
-        current_name,
-        next_name,
-        current_index + 1,
-        total_count
-    );
+        .map(|n| n.to_string_lossy())
+        .unwrap_or_default();
+    let header = format!(" {current_name}");
 
     // 端末幅を超えると次行に折り返されるため、表示セル幅基準で切り詰める。
     let width = term_width as usize;

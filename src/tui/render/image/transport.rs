@@ -3,7 +3,7 @@
 use crate::model::config::TransportMode;
 use base64::{Engine as _, engine::general_purpose};
 use std::env;
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, sync::Arc};
 
 #[cfg(unix)]
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -39,7 +39,7 @@ pub struct UploadPayload {
     /// 利用する転送方式
     pub transport: ResolvedTransport,
     /// 画像データを転送するためのペイロード
-    pub payload: String,
+    pub payload: Arc<str>,
     /// 画像データの生サイズ
     pub data_size: usize,
     /// 画像ペイロードのピクセル形式
@@ -105,147 +105,26 @@ pub fn resolve_transport_mode(mode: TransportMode) -> ResolvedTransport {
 /// 指定された転送方式でアップロード用の payload を準備する
 pub fn prepare_upload_payload(
     requested: ResolvedTransport,
-    encoded_payload: &str,
+    encoded_payload: &Arc<str>,
     image_data: &[u8],
     shm_state: &mut SharedMemoryState,
 ) -> UploadPayload {
-    match requested {
-        ResolvedTransport::File => {
-            if let Some(payload) = shm_state.write_file_payload(image_data, false) {
-                return payload;
-            }
-
-            UploadPayload {
-                transport: ResolvedTransport::Direct,
-                payload: encoded_payload.to_string(),
-                data_size: image_data.len(),
-                pixel_format: UploadPixelFormat::EncodedImage,
-                pixel_width: 0,
-                pixel_height: 0,
-            }
-        }
-        ResolvedTransport::TempFile => {
-            if let Some(payload) = shm_state.write_file_payload(image_data, true) {
-                return payload;
-            }
-
-            UploadPayload {
-                transport: ResolvedTransport::Direct,
-                payload: encoded_payload.to_string(),
-                data_size: image_data.len(),
-                pixel_format: UploadPixelFormat::EncodedImage,
-                pixel_width: 0,
-                pixel_height: 0,
-            }
-        }
-        ResolvedTransport::SharedMemory => {
-            #[cfg(unix)]
-            {
-                if let Some(payload) = shm_state.write(image_data) {
-                    return payload;
-                }
-            }
-
-            UploadPayload {
-                transport: ResolvedTransport::Direct,
-                payload: encoded_payload.to_string(),
-                data_size: image_data.len(),
-                pixel_format: UploadPixelFormat::EncodedImage,
-                pixel_width: 0,
-                pixel_height: 0,
-            }
-        }
-        ResolvedTransport::Direct => UploadPayload {
-            transport: ResolvedTransport::Direct,
-            payload: encoded_payload.to_string(),
-            data_size: image_data.len(),
-            pixel_format: UploadPixelFormat::EncodedImage,
-            pixel_width: 0,
-            pixel_height: 0,
-        },
-    }
-}
-
-/// ワーカースレッド側で利用する payload 準備。
-/// file/temp_file はここで同期書き込みを済ませ、描画スレッドの停止を避ける。
-pub fn prepare_upload_payload_offthread(
-    requested: ResolvedTransport,
-    encoded_payload: &str,
-    image_data: &[u8],
-) -> UploadPayload {
-    match requested {
-        ResolvedTransport::File => {
-            let target = stable_file_png_path();
-            if let Some(payload) =
-                write_payload_to_path(target, image_data, ResolvedTransport::File)
-            {
-                return payload;
-            }
-
-            UploadPayload {
-                transport: ResolvedTransport::Direct,
-                payload: encoded_payload.to_string(),
-                data_size: image_data.len(),
-                pixel_format: UploadPixelFormat::EncodedImage,
-                pixel_width: 0,
-                pixel_height: 0,
-            }
-        }
-        ResolvedTransport::TempFile => {
-            let target = unique_temp_png_path();
-            if let Some(payload) =
-                write_payload_to_path(target, image_data, ResolvedTransport::TempFile)
-            {
-                return payload;
-            }
-
-            UploadPayload {
-                transport: ResolvedTransport::Direct,
-                payload: encoded_payload.to_string(),
-                data_size: image_data.len(),
-                pixel_format: UploadPixelFormat::EncodedImage,
-                pixel_width: 0,
-                pixel_height: 0,
-            }
-        }
-        // shared memory はプロセス内状態を扱うため描画側の既存経路を使用する。
-        ResolvedTransport::SharedMemory | ResolvedTransport::Direct => UploadPayload {
-            transport: ResolvedTransport::Direct,
-            payload: encoded_payload.to_string(),
-            data_size: image_data.len(),
-            pixel_format: UploadPixelFormat::EncodedImage,
-            pixel_width: 0,
-            pixel_height: 0,
-        },
-    }
-}
-
-fn write_payload_to_path(
-    target: PathBuf,
-    image_data: &[u8],
-    transport: ResolvedTransport,
-) -> Option<UploadPayload> {
-    if fs::write(&target, image_data).is_err() {
-        return None;
-    }
-
-    let path_str = target.to_string_lossy();
-    let payload = general_purpose::STANDARD.encode(path_str.as_bytes());
-    Some(UploadPayload {
-        transport,
-        payload,
+    let prepared = match requested {
+        ResolvedTransport::File => shm_state.write_file_payload(image_data, false),
+        ResolvedTransport::TempFile => shm_state.write_file_payload(image_data, true),
+        #[cfg(unix)]
+        ResolvedTransport::SharedMemory => shm_state.write(image_data),
+        _ => None,
+    };
+    // 準備できなければ direct で送る
+    prepared.unwrap_or_else(|| UploadPayload {
+        transport: ResolvedTransport::Direct,
+        payload: encoded_payload.clone(),
         data_size: image_data.len(),
         pixel_format: UploadPixelFormat::EncodedImage,
         pixel_width: 0,
         pixel_height: 0,
     })
-}
-
-fn stable_file_png_path() -> PathBuf {
-    let mut path = env::temp_dir();
-    let pid = std::process::id();
-    path.push(format!("garou-kitty-file-{}.png", pid));
-    path
 }
 
 impl SharedMemoryState {
@@ -276,7 +155,7 @@ impl SharedMemoryState {
             } else {
                 ResolvedTransport::File
             },
-            payload,
+            payload: payload.into(),
             data_size: image_data.len(),
             pixel_format: UploadPixelFormat::EncodedImage,
             pixel_width: 0,
@@ -309,7 +188,7 @@ impl SharedMemoryState {
 
         Some(UploadPayload {
             transport: ResolvedTransport::SharedMemory,
-            payload,
+            payload: payload.into(),
             data_size: image_data.len(),
             pixel_format: UploadPixelFormat::EncodedImage,
             pixel_width: 0,
