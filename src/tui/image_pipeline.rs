@@ -200,6 +200,18 @@ pub(super) struct PreparedImagePayload {
     pub(super) prepare_duration: Duration,
 }
 
+/// f=100 で送れるのは PNG だけなので、それ以外の形式は PNG に変換する。
+/// WezTerm は他の形式も受け付けるが、Ghostty / kitty では表示されない
+fn png_payload(bytes: Vec<u8>) -> Result<Vec<u8>> {
+    if ::image::guess_format(&bytes).is_ok_and(|format| format == ImageFormat::Png) {
+        return Ok(bytes);
+    }
+    let mut png_bytes = Vec::new();
+    ::image::load_from_memory(&bytes)?
+        .write_to(&mut Cursor::new(&mut png_bytes), ImageFormat::Png)?;
+    Ok(png_bytes)
+}
+
 /// ワーカースレッドで画像描画に必要なデータをまとめて準備する
 #[allow(clippy::too_many_arguments)]
 pub(super) fn prepare_image_payload(
@@ -297,7 +309,12 @@ pub(super) fn prepare_image_payload(
         } else {
             None
         };
-        (Arc::from(bytes), source_dims, rgba_frame, false)
+        (
+            Arc::from(png_payload(bytes)?),
+            source_dims,
+            rgba_frame,
+            false,
+        )
     };
 
     let encoded_payload = Arc::<str>::from(general_purpose::STANDARD.encode(image_data.as_ref()));
@@ -339,6 +356,26 @@ pub(super) fn is_always_upload_mode(diff_mode: crate::model::config::ImageDiffMo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn encode(format: ImageFormat) -> Vec<u8> {
+        let img = DynamicImage::ImageRgb8(image::RgbImage::new(4, 3));
+        let mut out = Vec::new();
+        img.write_to(&mut Cursor::new(&mut out), format).unwrap();
+        out
+    }
+
+    #[test]
+    fn png_payload_keeps_png_and_converts_other_formats() {
+        let png = encode(ImageFormat::Png);
+        assert_eq!(png_payload(png.clone()).unwrap(), png);
+
+        let converted = png_payload(encode(ImageFormat::Jpeg)).unwrap();
+        assert_eq!(image::guess_format(&converted).unwrap(), ImageFormat::Png);
+        assert_eq!(
+            image::load_from_memory(&converted).unwrap().dimensions(),
+            (4, 3)
+        );
+    }
 
     #[test]
     fn box_shrink_averages_blocks() {

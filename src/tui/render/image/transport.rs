@@ -76,8 +76,10 @@ fn is_shared_memory_terminal() -> bool {
     // 既知の対応端末を優先判定する
     term_program.contains("wezterm")
         || term_program.contains("kitty")
+        || term_program.contains("ghostty")
         || term.contains("wezterm")
         || term.contains("xterm-kitty")
+        || term.contains("xterm-ghostty")
 }
 
 /// 現在環境で shared memory 転送を有効化できるかを判定する
@@ -175,8 +177,9 @@ fn unique_named_png_path(prefix: &str) -> PathBuf {
     path
 }
 
+/// t=t のファイル名には "tty-graphics-protocol" を含める必要がある（kitty / Ghostty は他の名前を拒否する）
 fn unique_temp_png_path() -> PathBuf {
-    unique_named_png_path("garou-kitty-temp")
+    unique_named_png_path("garou-tty-graphics-protocol")
 }
 
 #[cfg(unix)]

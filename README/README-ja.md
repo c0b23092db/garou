@@ -17,13 +17,14 @@ siv
 ### OS
 #### 検証済
 - [x] Windows 11(64bit)
+- [x] Linux
 #### 未検証
-- [ ] Linux
 - [ ] Mac
 ### ターミナルエミュレータ
 **Kitty Graphics Protocolが動作するターミナルエミュレータ**が必要です。
 #### 検証済
 - [x] Wezterm Nightly
+- [x] Ghostty 1.4.0
 #### 動作不能
 - Windows Terminal
 

@@ -17,13 +17,14 @@ siv
 ### OS
 #### Verified
 - [x] Windows 11 (64bit)
+- [x] Linux
 #### Unverified
-- [ ] Linux
 - [ ] Mac
 ### Terminal Emulator
 A **terminal emulator that supports the Kitty Graphics Protocol** is required.
 #### Verified
 - [x] Wezterm Nightly
+- [x] Ghostty 1.4.0
 #### Not Working
 - Windows Terminal
 
